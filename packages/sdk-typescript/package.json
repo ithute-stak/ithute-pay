@@ -1,0 +1,9 @@
+{
+  "name": "@ithute/pay-bridge-sdk",
+  "version": "1.0.0",
+  "type": "module",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "peerDependencies": {},
+  "devDependencies": {"typescript": "^5.8.3"}
+}

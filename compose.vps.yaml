@@ -1,0 +1,56 @@
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ${DB_NAME:-paybridge}
+      POSTGRES_USER: ${DB_USER:-paybridge}
+      POSTGRES_PASSWORD: ${DB_PASSWORD:?DB_PASSWORD is required}
+    volumes:
+      - ithute_pay_bridge_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${DB_USER:-paybridge} -d ${DB_NAME:-paybridge}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ithute_pay_bridge_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    restart: unless-stopped
+
+  ithute-pay-bridge:
+    image: ${IPB_IMAGE:?IPB_IMAGE is required}
+    env_file: .env
+    environment:
+      DATABASE_URL: postgresql+psycopg://${DB_USER:-paybridge}:${DB_PASSWORD}@postgres:5432/${DB_NAME:-paybridge}
+      REDIS_URL: redis://redis:6379/0
+      PUBLIC_APP_URL: ${PUBLIC_APP_URL:-https://pay.ithute.co.ls}
+      PUBLIC_API_URL: ${PUBLIC_API_URL:-https://api.pay.ithute.co.ls}
+      PORTAL_APP_URL: ${PORTAL_APP_URL:-https://portal.pay.ithute.co.ls}
+      BACKEND_INTERNAL_URL: http://127.0.0.1:8001
+      RUN_MIGRATIONS_ON_START: "true"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:8001:8001"
+      - "127.0.0.1:3001:3001"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/health >/dev/null && curl -fsS http://127.0.0.1:3001/ >/dev/null"]
+      interval: 30s
+      timeout: 5s
+      start_period: 45s
+      retries: 3
+    restart: unless-stopped
+
+volumes:
+  ithute_pay_bridge_postgres:
+  ithute_pay_bridge_redis:

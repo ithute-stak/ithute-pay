@@ -1,0 +1,80 @@
+--- a/apps/backend/integrations/registry.py
++++ b/apps/backend/integrations/registry.py
+@@ -17,10 +17,25 @@
+     if normalized != "mpesa":
+         raise HTTPException(status_code=400, detail=f"Provider '{name}' is not configured")
+ 
+-    # The gateway-owned provider configuration takes precedence. Client merchants
+-    # are routing/accounting tenants; the M-Pesa merchant credentials belong to
+-    # Ithute Pay Bridge itself. Legacy merchant-scoped configuration is retained
+-    # as a backward-compatible fallback for existing installations.
++    # Test applications must never be silently upgraded from their explicit
++    # simulator configuration to the platform's active live provider. The
++    # Sandbox Test Lab is intentionally deterministic and network-isolated.
++    if db is not None and application_id:
++        application = db.get(Application, application_id)
++        if application and application.environment == "test":
++            test_config = db.scalar(select(ProviderConfiguration).where(
++                ProviderConfiguration.merchant_id == application.merchant_id,
++                ProviderConfiguration.provider == normalized,
++                ProviderConfiguration.enabled.is_(True),
++                or_(ProviderConfiguration.application_id == application_id,
++                    ProviderConfiguration.application_id.is_(None)),
++            ).order_by(ProviderConfiguration.application_id.desc().nullslast()))
++            if test_config and test_config.mode == "simulator":
++                return SimulatorProvider()
++
++    # The gateway-owned provider configuration takes precedence for real client
++    # traffic. Client merchants are routing/accounting tenants; the M-Pesa
++    # credentials belong to Ithute Pay Bridge itself.
+     if db is not None:
+         gateway_config = active_gateway_provider_configuration(db, normalized)
+         if gateway_config:
+--- a/apps/backend/tests/test_sandbox_testing.py
++++ b/apps/backend/tests/test_sandbox_testing.py
+@@ -59,3 +59,45 @@
+ def test_sandbox_lab_requires_platform_authentication(client):
+     response = client.get("/api/v1/admin/testing/catalog")
+     assert response.status_code == 401
++
++
++def test_sandbox_lab_stays_on_simulator_when_gateway_live_provider_is_active(client, admin_token):
++    """The admin lab must never leak into the active external provider."""
++    from database.models import GatewayProviderConfiguration
++    from database.session import SessionLocal
++
++    with SessionLocal() as db:
++        db.query(GatewayProviderConfiguration).delete()
++        db.add(GatewayProviderConfiguration(
++            provider="mpesa",
++            environment="sandbox",
++            mode="live",
++            enabled=True,
++            active=True,
++            base_url="https://openapi.m-pesa.com",
++            market="vodacomLES",
++            country="LES",
++            currency="LSL",
++            service_provider_code="0000",
++            origin="https://example.invalid",
++            api_key_ciphertext=None,
++            public_key=None,
++        ))
++        db.commit()
++
++    response = client.post(
++        "/api/v1/admin/testing/run",
++        headers=auth(admin_token),
++        json={
++            "product": "collection",
++            "scenario": "success",
++            "amount": "25.00",
++            "currency": "LSL",
++        },
++    )
++
++    assert response.status_code == 200, response.text
++    body = response.json()
++    assert body["passed"] is True
++    assert body["status"] == "succeeded"
++    assert body["resource"]["failure_code"] is None

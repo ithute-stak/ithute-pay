@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 300" role="img" aria-label="Ithute Pay Bridge">
+  <rect width="1200" height="300" rx="34" fill="#fff"/>
+  <g transform="translate(26,18) scale(.52)">
+    <path d="M66 274C95 129 178 63 292 49" fill="none" stroke="#1479c9" stroke-width="28" stroke-linecap="round"/>
+    <path d="M446 271C428 166 378 98 326 70" fill="none" stroke="#5ab51b" stroke-width="22" stroke-linecap="round"/>
+    <path d="M118 340C181 292 327 292 394 340" fill="none" stroke="#062b4d" stroke-width="28" stroke-linecap="round"/>
+    <path d="M140 319C205 281 307 281 372 319" fill="none" stroke="#fff" stroke-width="12" stroke-linecap="round"/>
+    <circle cx="154" cy="339" r="21" fill="#1479c9"/><circle cx="358" cy="339" r="21" fill="#5ab51b"/>
+    <ellipse cx="256" cy="207" rx="58" ry="76" fill="#072d50"/>
+    <path d="M214 184Q256 158 298 184M207 220Q256 190 305 220M218 253Q256 230 294 253" fill="none" stroke="#ffc72c" stroke-width="24"/>
+    <circle cx="256" cy="127" r="38" fill="#072d50"/>
+    <path d="M242 100C235 68 223 60 207 58M270 100C277 68 289 60 305 58" fill="none" stroke="#072d50" stroke-width="12" stroke-linecap="round"/>
+    <path d="M212 145C155 112 132 139 149 181C166 220 207 204 227 181" fill="#fff" stroke="#072d50" stroke-width="12"/>
+    <path d="M300 145C357 112 380 139 363 181C346 220 305 204 285 181" fill="#fff" stroke="#072d50" stroke-width="12"/>
+  </g>
+  <text x="330" y="128" font-family="Inter,Arial,sans-serif" font-size="72" font-weight="800" fill="#062b4d">Ithute</text>
+  <text x="548" y="128" font-family="Inter,Arial,sans-serif" font-size="72" font-weight="800" fill="#1479c9">Pay Bridge</text>
+  <rect x="333" y="152" width="635" height="4" rx="2" fill="#e5edf5"/>
+  <text x="334" y="202" font-family="Inter,Arial,sans-serif" font-size="27" font-weight="600" fill="#2d9d2b" letter-spacing="5">PAYMENTS • PAYOUTS • SETTLEMENTS</text>
+  <text x="334" y="244" font-family="Inter,Arial,sans-serif" font-size="22" fill="#587087">Secure infrastructure by Ithute Solutions</text>
+</svg>

@@ -1,0 +1,21 @@
+manifest_version: "1"
+id: ithute-pay
+name: Ithute Pay
+category: payments
+source_path: products/ithute-pay
+public_url: https://pay.ithute.co.ls
+services:
+  auth: central
+  push: central
+  realtime: central
+  event_bus: central
+database:
+  ownership: product
+  engine: postgresql
+deployment:
+  mode: isolated
+  preserve_existing_data: true
+capabilities:
+  - payments
+  - wallets
+  - transfers

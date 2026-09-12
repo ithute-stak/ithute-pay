@@ -1,0 +1,10 @@
+[project]
+name = "ithute-pay-bridge-sdk"
+version = "1.0.0"
+description = "Python SDK for Ithute Pay Bridge"
+requires-python = ">=3.11"
+dependencies = ["httpx>=0.27"]
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"

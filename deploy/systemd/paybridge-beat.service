@@ -1,0 +1,16 @@
+[Unit]
+Description=Ithute Pay Bridge Celery Beat
+After=network.target redis-server.service postgresql.service
+
+[Service]
+Type=simple
+User=paybridge
+Group=paybridge
+WorkingDirectory=/opt/ithute-pay-bridge/apps/backend
+EnvironmentFile=/opt/ithute-pay-bridge/apps/backend/.env
+ExecStart=/opt/ithute-pay-bridge/apps/backend/.venv/bin/celery -A workers.celery_app.celery_app beat --loglevel=INFO
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

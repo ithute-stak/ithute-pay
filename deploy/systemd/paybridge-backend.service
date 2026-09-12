@@ -1,0 +1,16 @@
+[Unit]
+Description=Ithute Pay Bridge FastAPI Backend
+After=network.target postgresql.service redis-server.service
+
+[Service]
+Type=simple
+User=paybridge
+Group=paybridge
+WorkingDirectory=/opt/ithute-pay-bridge/apps/backend
+EnvironmentFile=/opt/ithute-pay-bridge/apps/backend/.env
+ExecStart=/opt/ithute-pay-bridge/apps/backend/.venv/bin/uvicorn main:app --host 127.0.0.1 --port 8001 --workers 2
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

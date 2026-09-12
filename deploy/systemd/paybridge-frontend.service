@@ -1,0 +1,16 @@
+[Unit]
+Description=Ithute Pay Bridge Next.js Frontend
+After=network.target paybridge-backend.service
+
+[Service]
+Type=simple
+User=paybridge
+Group=paybridge
+WorkingDirectory=/opt/ithute-pay-bridge/apps/frontend
+EnvironmentFile=/opt/ithute-pay-bridge/apps/frontend/.env.production
+ExecStart=/usr/bin/pnpm start --hostname 127.0.0.1 --port 3001
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

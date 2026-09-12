@@ -1,0 +1,111 @@
+# Ithute Pay is an independent product stack. Its database and Redis stay on
+# a private internal network; only the application joins the shared Ithute
+# platform network for central Auth, Push and Realtime access.
+services:
+  ithute-pay-db:
+    image: postgres:17-alpine
+    restart: always
+    environment:
+      POSTGRES_DB: ${ITHUTE_PAY_DB_NAME:-paybridge}
+      POSTGRES_USER: ${ITHUTE_PAY_DB_USER:-paybridge}
+      POSTGRES_PASSWORD: ${ITHUTE_PAY_DB_PASSWORD}
+    volumes:
+      - ithute_pay_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${ITHUTE_PAY_DB_USER:-paybridge} -d ${ITHUTE_PAY_DB_NAME:-paybridge}"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [ithute_pay_private]
+
+  ithute-pay-redis:
+    image: redis:7.4-alpine
+    restart: always
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ithute_pay_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+    networks: [ithute_pay_private]
+
+  ithute-pay:
+    image: ${ITHUTE_PAY_IMAGE:-ghcr.io/ithute-stak/ithute-pay-bridge}:${ITHUTE_PAY_IMAGE_TAG:-latest}
+    restart: always
+    environment:
+      ENVIRONMENT: production
+      DEBUG: "false"
+      EXPOSE_ERROR_DETAILS: "false"
+      APP_TIMEZONE: Africa/Maseru
+      DATABASE_URL: postgresql+psycopg://${ITHUTE_PAY_DB_USER:-paybridge}:${ITHUTE_PAY_DB_PASSWORD}@ithute-pay-db:5432/${ITHUTE_PAY_DB_NAME:-paybridge}
+      REDIS_URL: redis://ithute-pay-redis:6379/0
+      PUBLIC_APP_URL: https://pay.ithute.co.ls
+      PUBLIC_API_URL: https://api.pay.ithute.co.ls
+      PORTAL_APP_URL: https://portal.pay.ithute.co.ls
+      CORS_ORIGINS: https://pay.ithute.co.ls,https://portal.pay.ithute.co.ls
+      TRUSTED_HOSTS: pay.ithute.co.ls,api.pay.ithute.co.ls,portal.pay.ithute.co.ls,localhost,127.0.0.1,ithute-pay
+      AUTH_COOKIE_SECURE: "true"
+      COOKIE_SAMESITE: lax
+      COOKIE_DOMAIN: ""
+      SECRET_KEY: ${ITHUTE_PAY_SECRET_KEY}
+      DATA_ENCRYPTION_KEY: ${ITHUTE_PAY_DATA_ENCRYPTION_KEY}
+      RUN_MIGRATIONS_ON_START: "true"
+      AUTO_CREATE_PLATFORM_ADMIN: "true"
+      BOOTSTRAP_ADMIN_EMAIL: ${ITHUTE_PAY_BOOTSTRAP_ADMIN_EMAIL:-ithute.pay@itpay.co.ls}
+      BOOTSTRAP_ADMIN_PASSWORD: ${ITHUTE_PAY_BOOTSTRAP_ADMIN_PASSWORD}
+      BOOTSTRAP_ADMIN_FULL_NAME: Ithute Pay Administrator
+      ITHUTE_AUTH_ENABLED: "true"
+      ITHUTE_AUTH_LEGACY_LOGIN_ENABLED: ${ITHUTE_PAY_LEGACY_LOGIN_ENABLED:-true}
+      ITHUTE_AUTH_ISSUER: https://auth.ithute.co.ls
+      ITHUTE_AUTH_AUDIENCE: ithute-pay
+      ITHUTE_AUTH_JWKS_URL: https://auth.ithute.co.ls/.well-known/jwks.json
+      ITHUTE_AUTH_REDIRECT_URI: https://pay.ithute.co.ls/api/v1/auth/ithute/callback
+      ITHUTE_PUSH_ENABLED: "true"
+      ITHUTE_PUSH_URL: https://push.ithute.co.ls
+      ITHUTE_PUSH_SERVICE_CLIENT_SECRET: ${ITHUTE_SERVICE_ITHUTE_PAY_SECRET}
+      SANDBOX_TEST_LAB_ENABLED: "true"
+      MPESA_ENABLED: ${ITHUTE_PAY_MPESA_ENABLED:-false}
+      MPESA_MODE: ${ITHUTE_PAY_MPESA_MODE:-simulator}
+      MPESA_ENVIRONMENT: ${ITHUTE_PAY_MPESA_ENVIRONMENT:-sandbox}
+      MPESA_HOST: ${ITHUTE_PAY_MPESA_HOST:-https://openapi.m-pesa.com}
+      MPESA_MARKET: ${ITHUTE_PAY_MPESA_MARKET:-vodacomLES}
+      MPESA_COUNTRY: LES
+      MPESA_CURRENCY: LSL
+      MPESA_SERVICE_PROVIDER_CODE: ${ITHUTE_PAY_MPESA_SERVICE_PROVIDER_CODE:-}
+      MPESA_API_KEY: ${ITHUTE_PAY_MPESA_API_KEY:-}
+      MPESA_PUBLIC_KEY: ${ITHUTE_PAY_MPESA_PUBLIC_KEY:-}
+      MPESA_ORIGIN: ${ITHUTE_PAY_MPESA_ORIGIN:-https://api.pay.ithute.co.ls}
+      MPESA_SESSION_ACTIVATION_SECONDS: ${ITHUTE_PAY_MPESA_SESSION_ACTIVATION_SECONDS:-30}
+      MPESA_REQUEST_TIMEOUT_SECONDS: ${ITHUTE_PAY_MPESA_REQUEST_TIMEOUT_SECONDS:-60}
+    depends_on:
+      ithute-pay-db:
+        condition: service_healthy
+      ithute-pay-redis:
+        condition: service_healthy
+      ithute-auth:
+        condition: service_healthy
+      ithute-push:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8001/health >/dev/null && curl -fsS http://127.0.0.1:3001/portal >/dev/null"]
+      interval: 15s
+      timeout: 5s
+      retries: 12
+      start_period: 45s
+    networks: [ithute_pay_private, mailbox_dns]
+
+  nginx:
+    depends_on:
+      ithute-pay:
+        condition: service_healthy
+
+networks:
+  ithute_pay_private:
+    driver: bridge
+    internal: true
+
+volumes:
+  ithute_pay_postgres:
+  ithute_pay_redis:
