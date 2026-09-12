@@ -2,7 +2,7 @@ manifest_version: "1"
 id: ithute-pay
 name: Ithute Pay
 category: payments
-source_path: products/ithute-pay
+source_path: .
 public_url: https://pay.ithute.co.ls
 services:
   auth: central
