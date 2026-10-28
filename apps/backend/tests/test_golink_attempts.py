@@ -92,3 +92,27 @@ def test_changed_persisted_amount_is_rejected_before_network(monkeypatch):
     tx.amount = Decimal("11.00")
     with pytest.raises(GolinkCollectionAttemptError, match="amount differs"):
         asyncio.run(send_prepared_collection(FakeSession(), transaction=tx, client=None))
+
+
+@pytest.mark.parametrize("corruption,match", [
+    ({"idempotencyKey": "bad" + chr(10) + "key"}, "idempotency"),
+    ({"payer": {}}, "parties"),
+    ({"payee": {"name": ""}}, "parties"),
+])
+def test_corrupted_persisted_collection_never_transitions_or_posts(monkeypatch, corruption, match):
+    import asyncio
+
+    monkeypatch.setenv("GOLINK_COLLECTIONS_ENABLED", "true")
+    payment, tx = fixtures()
+    db = FakeSession()
+    prepare_collection_attempt(db, payment=payment, transaction=tx,
+                               rail="MPESA", payee_name="Merchant")
+    tx.raw_request = {**tx.raw_request, **corruption}
+
+    class NoNetworkClient:
+        async def create_payment(self, **kwargs):
+            raise AssertionError("Corrupted attempt reached Golink")
+
+    with pytest.raises(GolinkCollectionAttemptError, match=match):
+        asyncio.run(send_prepared_collection(db, transaction=tx, client=NoNetworkClient()))
+    assert tx.status == "created"
