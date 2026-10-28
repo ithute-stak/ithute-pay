@@ -72,7 +72,8 @@ def prepare_rail_draft(
         raise TypeError("Payer and payee must be mappings")
     _validate_party_fields(payer)
     _validate_party_fields(payee)
-    # String-only keys and JSON-compatible finite values avoid ambiguous,\n    # lossy or unbounded serialization in future provider contracts.\n    return RailDraft(
+    # String-only keys and finite values avoid ambiguous serialization.
+    return RailDraft(
         rail=rail, direction=direction, currency=currency,
         amount_minor=amount_to_minor(Decimal(amount)),
         idempotency_key=idempotency_key,
