@@ -155,7 +155,7 @@ def test_get_payment_rejects_other_unsafe_identifiers(payment_id):
     ({}, {"name": "Merchant"}, "attempt-1"),
     ({"phone": "26650000000"}, {}, "attempt-1"),
     ({"phone": "26650000000"}, {"name": "Merchant"}, "x" * 129),
-    ({"phone": "26650000000"}, {"name": "Merchant"}, "bad\\nkey"),
+    ({"phone": "26650000000"}, {"name": "Merchant"}, "bad" + chr(10) + "key"),
 ])
 def test_invalid_collection_intent_never_reaches_network(payer, payee, key):
     calls = []
