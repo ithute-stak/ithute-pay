@@ -46,7 +46,7 @@ def test_timeout_does_not_retry_or_change_idempotency_key():
     async def run():
         await GolinkClient("glk_test_example").create_payment(
             direction="DEBIT", rail="MPESA", idempotency_key="original-key",
-            amount_minor=1000, currency="LSL", payer={}, payee={},
+            amount_minor=1000, currency="LSL", payer={"phone": "26650000000"}, payee={"name": "Test"},
             transport=httpx.MockTransport(handler))
     with pytest.raises(GolinkError, match="outcome unknown"):
         asyncio.run(run())
@@ -149,3 +149,22 @@ def test_invalid_or_nonobject_provider_response_fails_closed(body):
 def test_get_payment_rejects_other_unsafe_identifiers(payment_id):
     with pytest.raises(ValueError, match="Invalid Golink payment ID"):
         asyncio.run(GolinkClient("glk_test_example").get_payment(payment_id))
+
+
+@pytest.mark.parametrize("payer,payee,key", [
+    ({}, {"name": "Merchant"}, "attempt-1"),
+    ({"phone": "26650000000"}, {}, "attempt-1"),
+    ({"phone": "26650000000"}, {"name": "Merchant"}, "x" * 129),
+    ({"phone": "26650000000"}, {"name": "Merchant"}, "bad\\nkey"),
+])
+def test_invalid_collection_intent_never_reaches_network(payer, payee, key):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise AssertionError("Invalid intent reached network")
+    with pytest.raises(ValueError):
+        asyncio.run(GolinkClient("glk_test_example").create_payment(
+            direction="DEBIT", rail="MPESA", idempotency_key=key,
+            amount_minor=1000, currency="LSL", payer=payer, payee=payee,
+            transport=httpx.MockTransport(handler)))
+    assert calls == []
