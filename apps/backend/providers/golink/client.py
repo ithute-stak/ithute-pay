@@ -79,16 +79,16 @@ class GolinkClient:
                              transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
         # Additional rails have no verified Golink contract. Block even direct
         # calls to this lower-level client until a separate certified adapter exists.
-        if direction not in {"DEBIT", "CREDIT"} or rail not in {"MPESA", "ECOCASH"}:
+        if direction != "DEBIT" or rail not in {"MPESA", "ECOCASH"}:
             raise ValueError("Unsupported Golink direction or rail")
-        if not idempotency_key.strip() or isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
+        if stored_payment_method_id is not None:
+            raise ValueError("Stored payment methods are not certified for this adapter")
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
             raise ValueError("Valid idempotency key and positive minor-unit amount required")
         if currency != "LSL":
             raise ValueError("Only LSL is enabled in this initial adapter")
         payload = {"direction": direction, "rail": rail, "idempotencyKey": idempotency_key,
                    "amountMinor": amount_minor, "currency": currency, "payer": payer, "payee": payee}
-        if stored_payment_method_id is not None:
-            payload["storedPaymentMethodId"] = stored_payment_method_id
         return await self._request("POST", "payments", payload=payload, transport=transport)
 
     async def get_payment(self, payment_id: str, *, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
