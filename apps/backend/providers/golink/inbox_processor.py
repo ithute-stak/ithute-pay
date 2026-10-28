@@ -7,6 +7,7 @@ Never trusts webhook status as proof of payment.
 from __future__ import annotations
 
 import os
+from datetime import datetime, timezone
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -109,7 +110,7 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
     if status in {"PENDING", "PROCESSING"}:
         # Retain event for future polling; never infer failure from elapsed time.
         locked_callback.processing_status = "polling"
-        locked_callback.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
+        locked_callback.updated_at = datetime.now(timezone.utc)
         db.commit()
         return "pending"
     if status == "CANCELLED":
