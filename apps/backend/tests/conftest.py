@@ -3,7 +3,8 @@ from pathlib import Path
 
 TEST_DB = Path(__file__).parent / "paybridge_test.db"
 os.environ["ENVIRONMENT"] = "test"
-os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DB}"
+if os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true":
+    os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DB}"
 os.environ["MPESA_ENABLED"] = "false"
 os.environ["MPESA_MODE"] = "simulator"
 os.environ["SECRET_KEY"] = "test-secret-long-enough-for-tests"
