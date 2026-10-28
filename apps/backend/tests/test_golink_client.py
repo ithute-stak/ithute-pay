@@ -85,3 +85,17 @@ def test_non_200_response_is_safe_and_does_not_leak_key():
             "payment-123", transport=httpx.MockTransport(handler)))
     assert exc_info.value.status_code == 401
     assert key not in str(exc_info.value)
+
+
+@pytest.mark.parametrize("rail", ["CARD", "CPAY", "EFT", "PAYSLIP"])
+def test_uncertified_rail_rejected_before_network_at_low_level_client(rail):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise AssertionError("Uncertified rail reached network")
+    with pytest.raises(ValueError, match="Unsupported Golink direction or rail"):
+        asyncio.run(GolinkClient("glk_test_example").create_payment(
+            direction="DEBIT", rail=rail, idempotency_key="original-key",
+            amount_minor=1000, currency="LSL", payer={}, payee={},
+            transport=httpx.MockTransport(handler)))
+    assert calls == []
