@@ -101,3 +101,43 @@ def test_late_processing_does_not_reverse_success(monkeypatch):
     with SessionLocal() as db:
         assert asyncio.run(reconcile_golink_inbox_item(db, ids[1], FakeGolink("PROCESSING"))) == "stale"
         assert db.get(ProviderTransaction, txid).status == "succeeded"
+
+
+def test_postgres_two_workers_only_post_one_journal(monkeypatch):
+    """Exercise two actual DB sessions racing on different callbacks for one payment."""
+    import threading
+    from concurrent.futures import ThreadPoolExecutor
+    from database.session import engine
+
+    if engine.dialect.name != "postgresql":
+        pytest.skip("PostgreSQL row-lock concurrency test")
+    monkeypatch.setenv("GOLINK_RECONCILIATION_ENABLED", "true")
+    with SessionLocal() as db:
+        txid, ids = seed_payment(db)
+
+    at_provider = threading.Barrier(2, timeout=15)
+
+    class ConcurrentGolink(FakeGolink):
+        async def get_payment(self, payment_id):
+            await asyncio.to_thread(at_provider.wait)
+            return await super().get_payment(payment_id)
+
+    def process(callback_id):
+        with SessionLocal() as db:
+            return asyncio.run(
+                reconcile_golink_inbox_item(db, callback_id, ConcurrentGolink("SUCCEEDED"))
+            )
+
+    with ThreadPoolExecutor(max_workers=2) as executor:
+        future_a = executor.submit(process, ids[0])
+        future_b = executor.submit(process, ids[1])
+        outcomes = {future_a.result(timeout=30), future_b.result(timeout=30)}
+
+    assert outcomes == {"succeeded", "duplicate"}
+    with SessionLocal() as db:
+        tx = db.get(ProviderTransaction, txid)
+        assert tx.status == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id)).where(
+            JournalEntry.source_type == "provider_transaction",
+            JournalEntry.source_id == txid,
+        )) == 1
