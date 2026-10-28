@@ -62,3 +62,33 @@ def test_collection_execution_disabled_without_network(monkeypatch):
     _, tx = fixtures()
     with pytest.raises(GolinkCollectionAttemptError, match="disabled"):
         asyncio.run(send_prepared_collection(FakeSession(), transaction=tx, client=None))
+
+
+def test_unknown_attempt_cannot_be_prepared_again():
+    payment, tx = fixtures()
+    tx.status = "unknown"
+    with pytest.raises(GolinkCollectionAttemptError, match="reconciled"):
+        prepare_collection_attempt(FakeSession(), payment=payment, transaction=tx,
+                                   rail="MPESA", payee_name="Merchant")
+
+
+def test_unknown_attempt_cannot_be_sent_again(monkeypatch):
+    import asyncio
+    monkeypatch.setenv("GOLINK_COLLECTIONS_ENABLED", "true")
+    payment, tx = fixtures()
+    prepare_collection_attempt(FakeSession(), payment=payment, transaction=tx,
+                               rail="MPESA", payee_name="Merchant")
+    tx.status = "unknown"
+    with pytest.raises(GolinkCollectionAttemptError, match="reconciled"):
+        asyncio.run(send_prepared_collection(FakeSession(), transaction=tx, client=None))
+
+
+def test_changed_persisted_amount_is_rejected_before_network(monkeypatch):
+    import asyncio
+    monkeypatch.setenv("GOLINK_COLLECTIONS_ENABLED", "true")
+    payment, tx = fixtures()
+    prepare_collection_attempt(FakeSession(), payment=payment, transaction=tx,
+                               rail="MPESA", payee_name="Merchant")
+    tx.amount = Decimal("11.00")
+    with pytest.raises(GolinkCollectionAttemptError, match="amount differs"):
+        asyncio.run(send_prepared_collection(FakeSession(), transaction=tx, client=None))
