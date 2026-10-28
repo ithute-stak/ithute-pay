@@ -95,7 +95,7 @@ def test_changed_persisted_amount_is_rejected_before_network(monkeypatch):
 
 
 @pytest.mark.parametrize("corruption,match", [
-    ({"idempotencyKey": "bad" + chr(10) + "key"}, "idempotency"),
+    ({"idempotencyKey": "bad" + chr(10) + "key"}, "[Ii]dempotency"),
     ({"payer": {}}, "parties"),
     ({"payee": {"name": ""}}, "parties"),
 ])
