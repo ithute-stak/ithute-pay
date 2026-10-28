@@ -168,3 +168,13 @@ def test_invalid_collection_intent_never_reaches_network(payer, payee, key):
             amount_minor=1000, currency="LSL", payer=payer, payee=payee,
             transport=httpx.MockTransport(handler)))
     assert calls == []
+
+
+@pytest.mark.parametrize("timeout", [0, -1, float("nan"), float("inf"), 121])
+def test_invalid_golink_timeout_rejected_before_network(timeout):
+    with pytest.raises(GolinkConfigurationError, match="timeout"):
+        GolinkClient("glk_test_example", timeout_seconds=timeout)
+
+
+def test_valid_bounded_golink_timeout():
+    assert GolinkClient("glk_test_example", timeout_seconds=30).timeout_seconds == 30
