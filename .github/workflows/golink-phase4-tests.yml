@@ -3,6 +3,10 @@ on:
   pull_request:
     paths:
       - 'apps/backend/providers/golink/**'
+      - 'apps/backend/integrations/registry.py'
+      - 'apps/backend/providers/mpesa/factory.py'
+      - 'apps/backend/providers/ecocash/factory.py'
+      - 'docs/GOLINK_*.md'
       - 'apps/backend/tests/test_golink_*.py'
       - 'apps/backend/workers/golink_reconciliation.py'
       - 'apps/backend/workers/tasks.py'
@@ -34,6 +38,9 @@ jobs:
           dev_dependencies = project["project"]["optional-dependencies"]["dev"]
           subprocess.check_call([sys.executable, "-m", "pip", "install", *dependencies, *dev_dependencies])
           PY
+      - name: Compile Golink Python modules and tests
+        run: |
+          python -m compileall -q providers/golink tests/test_golink_*.py workers/golink_reconciliation.py
       - name: Golink regression tests
         run: |
           # The test database must always be created fresh in CI.
