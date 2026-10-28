@@ -108,7 +108,8 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
         return "stale"
     if status in {"PENDING", "PROCESSING"}:
         # Retain event for future polling; never infer failure from elapsed time.
-        locked_callback.processing_status = "received"
+        locked_callback.processing_status = "polling"
+        locked_callback.updated_at = __import__("datetime").datetime.now(__import__("datetime").timezone.utc)
         db.commit()
         return "pending"
     if status == "CANCELLED":
