@@ -23,12 +23,12 @@ from services.payments import apply_provider_result
 
 
 def webhook_payment_id(event: dict) -> str:
-    """Require a known explicit payment ID; avoid guessing correlation fields."""
-    data = event.get("data")
-    identifier = data.get("id") if isinstance(data, dict) else None
-    if not isinstance(identifier, str) or not identifier or len(identifier) > 64:
-        raise GolinkReconciliationError("Webhook payment identifier missing")
-    return identifier
+    """Use the same validated payment identity as webhook ingestion."""
+    from providers.golink.webhooks import extract_payment_id
+    try:
+        return extract_payment_id(event)
+    except ValueError:
+        raise GolinkReconciliationError("Webhook payment identifier missing or invalid") from None
 
 
 async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: GolinkClient) -> str:
