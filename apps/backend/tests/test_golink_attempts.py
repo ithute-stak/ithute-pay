@@ -1,0 +1,64 @@
+"""Tests of immutable provider-request preparation and disabled execution."""
+from decimal import Decimal
+from types import SimpleNamespace
+
+import pytest
+
+from providers.golink.attempts import (
+    GolinkCollectionAttemptError, prepare_collection_attempt, send_prepared_collection,
+)
+
+
+class FakeSession:
+    def __init__(self):
+        self.flushed = False
+        self.added = []
+    def add(self, obj):
+        self.added.append(obj)
+    def flush(self):
+        self.flushed = True
+
+
+def fixtures():
+    payment = SimpleNamespace(
+        id="p1", merchant_id="m1", application_id="a1",
+        amount=Decimal("10.00"), currency="LSL", customer_phone="26650000000",
+    )
+    tx = SimpleNamespace(
+        provider="golink", resource_type="payment_intent", resource_id="p1",
+        merchant_id="m1", application_id="a1", amount=Decimal("10.00"),
+        currency="LSL", transaction_reference="stable-1", raw_request={},
+        status="created",
+    )
+    return payment, tx
+
+
+def test_preparation_persists_stable_minor_unit_request():
+    payment, tx = fixtures()
+    db = FakeSession()
+    payload = prepare_collection_attempt(db, payment=payment, transaction=tx,
+                                         rail="MPESA", payee_name="Merchant")
+    assert db.flushed and payload["amountMinor"] == 1000
+    assert payload["idempotencyKey"] == "stable-1"
+    assert tx.raw_request == payload
+    assert prepare_collection_attempt(db, payment=payment, transaction=tx,
+                                      rail="MPESA", payee_name="Merchant") == payload
+    with pytest.raises(GolinkCollectionAttemptError, match="cannot be changed"):
+        prepare_collection_attempt(db, payment=payment, transaction=tx,
+                                   rail="ECOCASH", payee_name="Merchant")
+
+
+def test_mismatched_tenant_or_amount_rejected():
+    payment, tx = fixtures()
+    payment.merchant_id = "m2"
+    with pytest.raises(GolinkCollectionAttemptError, match="ownership"):
+        prepare_collection_attempt(FakeSession(), payment=payment, transaction=tx,
+                                   rail="MPESA", payee_name="Merchant")
+
+
+def test_collection_execution_disabled_without_network(monkeypatch):
+    import asyncio
+    monkeypatch.delenv("GOLINK_COLLECTIONS_ENABLED", raising=False)
+    _, tx = fixtures()
+    with pytest.raises(GolinkCollectionAttemptError, match="disabled"):
+        asyncio.run(send_prepared_collection(FakeSession(), transaction=tx, client=None))
