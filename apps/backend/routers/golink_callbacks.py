@@ -15,7 +15,7 @@ from sqlalchemy.orm import Session
 
 from database.models import ProviderCallbackLog
 from database.session import get_db
-from providers.golink.webhooks import InvalidGolinkSignature, verify_golink_signature
+from providers.golink.webhooks import InvalidGolinkSignature, verify_golink_signature, extract_payment_id
 
 router = APIRouter(prefix="/provider-callbacks/golink", tags=["Golink callbacks"])
 
@@ -43,6 +43,11 @@ async def receive_golink_webhook(request: Request, db: Session = Depends(get_db)
         "payment.cancelled", "payment.refunded",
     }:
         raise HTTPException(status_code=422, detail="Unsupported webhook event")
+
+    try:
+        extract_payment_id(event)
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid payment identity") from None
 
     # Persist before ACK; the unique constraint prevents identical event replay.
     # The callback log's callback_type is a fixed string to stay within String(30).
