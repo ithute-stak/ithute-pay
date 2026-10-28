@@ -88,6 +88,14 @@ class GolinkClient:
             raise ValueError("Stored payment methods are not certified for this adapter")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
             raise ValueError("Valid idempotency key and positive minor-unit amount required")
+        if len(idempotency_key) > 128 or any(ord(c) < 33 or ord(c) > 126 for c in idempotency_key):
+            raise ValueError("Invalid idempotency key characters or length")
+        if not isinstance(payer, dict) or not isinstance(payee, dict):
+            raise ValueError("Payer and payee must be mappings")
+        if not isinstance(payer.get("phone"), str) or not payer["phone"].strip():
+            raise ValueError("Payer phone is required")
+        if not isinstance(payee.get("name"), str) or not payee["name"].strip():
+            raise ValueError("Payee name is required")
         if currency != "LSL":
             raise ValueError("Only LSL is enabled in this initial adapter")
         payload = {"direction": direction, "rail": rail, "idempotencyKey": idempotency_key,
