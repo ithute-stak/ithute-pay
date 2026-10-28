@@ -103,3 +103,24 @@ def test_uncertified_rail_does_not_call_provider_or_database(rail):
         asyncio.run(execute_rail_draft(
             draft, client=ExplodingDependency(), db=ExplodingDependency(),
         ))
+
+
+@pytest.mark.parametrize("bad_payload", [
+    {1: "not-string-key"},
+    {"amount": float("nan")},
+    {"nested": [{"rate": float("inf")}]},
+])
+def test_ambiguous_party_payload_values_are_rejected(bad_payload):
+    with pytest.raises(GolinkRailNotCertified):
+        prepare_rail_draft(
+            rail="EFT", amount=Decimal("2.00"), idempotency_key="stable",
+            payer=bad_payload, payee={"name": "Merchant"},
+        )
+
+
+def test_long_idempotency_reference_is_rejected():
+    with pytest.raises(ValueError, match="idempotency"):
+        prepare_rail_draft(
+            rail="CARD", amount=Decimal("2.00"), idempotency_key="x" * 129,
+            payer={}, payee={"name": "Merchant"},
+        )
