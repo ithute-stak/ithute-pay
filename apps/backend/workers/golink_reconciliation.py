@@ -38,6 +38,11 @@ def attempt_from_status(status: str) -> int:
 def retry_due(row, now) -> bool:
     if row.processing_status == "received":
         return True
+    if row.processing_status == "polling":
+        updated = row.updated_at
+        if updated.tzinfo is None and now.tzinfo is not None:
+            now = now.replace(tzinfo=None)
+        return updated + timedelta(seconds=300) <= now
     attempts = attempt_from_status(row.processing_status)
     if not 1 <= attempts <= len(RETRY_DELAYS_SECONDS):
         return False
@@ -69,14 +74,18 @@ async def reconcile_golink_batch() -> dict[str, int]:
         ids = list(db.scalars(select(ProviderCallbackLog.id).where(
             ProviderCallbackLog.provider == "golink",
             ProviderCallbackLog.callback_type == "outbound_webhook",
-            ProviderCallbackLog.processing_status.in_(["received", "retry_1", "retry_2", "retry_3", "retry_4"]),
-        ).order_by(ProviderCallbackLog.created_at.asc()).limit(BATCH_LIMIT)).all())
+            ProviderCallbackLog.processing_status.in_(["received", "polling", "retry_1", "retry_2", "retry_3", "retry_4"]),
+        ).order_by(ProviderCallbackLog.updated_at.asc()).limit(500)).all())
 
+    attempted = 0
     for callback_id in ids:
+        if attempted >= BATCH_LIMIT:
+            break
         with SessionLocal() as db:
             row = db.get(ProviderCallbackLog, callback_id)
             if row is None or not retry_due(row, utcnow()):
                 continue
+            attempted += 1
             try:
                 result = await reconcile_golink_inbox_item(db, callback_id, client)
                 counters["pending" if result == "pending" else "processed"] += 1
@@ -84,7 +93,7 @@ async def reconcile_golink_batch() -> dict[str, int]:
                 db.rollback()
                 retry_row = db.get(ProviderCallbackLog, callback_id)
                 if retry_row and retry_row.processing_status != "processed":
-                    attempt = attempt_from_status(retry_row.processing_status) + 1
+                    attempt = (0 if retry_row.processing_status == "polling" else attempt_from_status(retry_row.processing_status)) + 1
                     retry_row.processing_status = retry_status(attempt)
                     retry_row.error_message = type(exc).__name__[:100]
                     db.add(retry_row)
