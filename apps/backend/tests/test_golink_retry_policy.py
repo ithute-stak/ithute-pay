@@ -36,3 +36,10 @@ def test_naive_database_timestamp_supported():
     now = datetime(2026, 10, 28, tzinfo=timezone.utc)
     row = SimpleNamespace(processing_status="retry_1", updated_at=now.replace(tzinfo=None))
     assert retry_due(row, now + timedelta(seconds=60))
+
+
+def test_pending_polling_has_five_minute_cooldown():
+    now = datetime(2026, 10, 28, tzinfo=timezone.utc)
+    row = SimpleNamespace(processing_status="polling", updated_at=now)
+    assert not retry_due(row, now + timedelta(seconds=299))
+    assert retry_due(row, now + timedelta(seconds=300))
