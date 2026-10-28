@@ -7,6 +7,7 @@ certification, PCI scope review and rail-specific field validation.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from copy import deepcopy
 from decimal import Decimal
 from typing import Any, Mapping
 
@@ -31,34 +32,20 @@ class RailDraft:
     payee: dict[str, Any]
 
 
-def prepare_rail_draft(
-    *, rail: str, amount: Decimal, idempotency_key: str,
-    payer: Mapping[str, Any], payee: Mapping[str, Any],
-    direction: str = "DEBIT", currency: str = "LSL",
-) -> RailDraft:
-    """Validate basic boundaries; NEVER accept or store raw card credentials.
-
-    A draft is for future contract work only. It deliberately has no .send().
-    Rail-specific schemas are still unverified and must be implemented after
-    reviewing actual Golink sandbox payloads.
-    """
-    if rail not in PHASE5_RAILS:
-        raise GolinkRailNotCertified("Rail not part of Phase 5 draft scope")
-    if direction != "DEBIT" or currency != "LSL":
-        raise GolinkRailNotCertified("Only LSL debit drafts are supported")
-    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
-        raise ValueError("An existing immutable idempotency key is required")
-    if not isinstance(payer, Mapping) or not isinstance(payee, Mapping):
-        raise TypeError("Payer and payee must be mappings")
-    forbidden = {"pan", "cardnumber", "cvv", "cvc", "pin", "password", "expiry", "expirymonth", "expiryyear"}
-    for party in (payer, payee):
-        if any(str(key).replace("_", "").lower() in forbidden for key in party):
-            raise GolinkRailNotCertified("Raw card or authentication credentials are forbidden")
+def _validate_party_fields(value: Any, *, depth: int = 0) -> None:
+    """Block nested sensitive fields and unsupported payload shapes."""
+    if depth > 8:
+        raise GolinkRailNotCertified("Nested party payload exceeds safety limit")
+    if isinstance(value, Mapping):
+        if len(value) > 64:
+            raise GolinkRailNotCertified("Party payload exceeds safety limit")
+        _validate_party_fields(payer)
+    _validate_party_fields(payee)
     return RailDraft(
         rail=rail, direction=direction, currency=currency,
         amount_minor=amount_to_minor(Decimal(amount)),
         idempotency_key=idempotency_key,
-        payer=dict(payer), payee=dict(payee),
+        payer=deepcopy(dict(payer)), payee=deepcopy(dict(payee)),
     )
 
 
