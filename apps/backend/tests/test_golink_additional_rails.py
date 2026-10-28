@@ -165,3 +165,25 @@ def test_phase5_certification_registry_matches_documented_blocked_rails():
         assert RAIL_CERTIFICATION[rail]
         assert not any(RAIL_CERTIFICATION[rail].values())
     assert "No payment execution permitted" in doc
+
+
+def test_payment_draft_is_deeply_immutable():
+    from dataclasses import FrozenInstanceError
+
+    payer = {"identity": {"reference": "original"}, "items": [{"code": "A"}]}
+    draft = prepare_rail_draft(
+        rail="EFT", amount=Decimal("10.00"), idempotency_key="frozen-test",
+        payer=payer, payee={"name": "Merchant"},
+    )
+    payer["identity"]["reference"] = "changed"
+    payer["items"][0]["code"] = "changed"
+    assert draft.payer["identity"]["reference"] == "original"
+    assert draft.payer["items"][0]["code"] == "A"
+    with pytest.raises(TypeError):
+        draft.payer["identity"]["reference"] = "tampered"
+    with pytest.raises(TypeError):
+        draft.payer["items"][0]["code"] = "tampered"
+    with pytest.raises(TypeError):
+        draft.payee["name"] = "tampered"
+    with pytest.raises(FrozenInstanceError):
+        draft.idempotency_key = "replacement"
