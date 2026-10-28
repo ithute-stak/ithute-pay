@@ -49,6 +49,8 @@ def prepare_collection_attempt(
         "payer": {"phone": payment.customer_phone},
         "payee": {"name": payee_name},
     }
+    if transaction.status != "created":
+        raise GolinkCollectionAttemptError("Uncertain or submitted attempt must be reconciled")
     if transaction.raw_request:
         if transaction.raw_request != payload:
             raise GolinkCollectionAttemptError("Attempt payload cannot be changed")
