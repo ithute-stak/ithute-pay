@@ -79,9 +79,9 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
     # Lock and re-check all relevant rows after network I/O. A second worker
     # may have already processed the event or posted the transaction.
     locked_callback = db.scalar(select(ProviderCallbackLog).where(
-        ProviderCallbackLog.id == callback_id).with_for_update())
+        ProviderCallbackLog.id == callback_id).with_for_update().execution_options(populate_existing=True))
     locked_tx = db.scalar(select(ProviderTransaction).where(
-        ProviderTransaction.id == tx.id).with_for_update())
+        ProviderTransaction.id == tx.id).with_for_update().execution_options(populate_existing=True))
     if locked_callback is None or locked_tx is None:
         raise GolinkReconciliationError("Original records disappeared")
     if locked_callback.processing_status == "processed":
@@ -89,12 +89,22 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
     if locked_tx.provider_transaction_id != payment_id or locked_tx.provider != "golink":
         raise GolinkReconciliationError("Provider transaction changed during reconciliation")
     locked_payment = db.scalar(select(PaymentIntent).where(
-        PaymentIntent.id == locked_tx.resource_id).with_for_update())
+        PaymentIntent.id == locked_tx.resource_id).with_for_update().execution_options(populate_existing=True))
     if (locked_payment is None or locked_payment.merchant_id != locked_tx.merchant_id
             or locked_payment.application_id != locked_tx.application_id
             or locked_payment.amount != locked_tx.amount
             or locked_payment.currency != locked_tx.currency):
         raise GolinkReconciliationError("Payment record changed during reconciliation")
+    if locked_tx.status == "succeeded" and locked_tx.confirmed_at is not None and status == "SUCCEEDED":
+        # A separate webhook may refer to the same already-settled payment.
+        # Never call apply_provider_result again for this transaction.
+        locked_callback.processing_status = "processed"
+        db.commit()
+        return "duplicate"
+    if locked_tx.status in {"failed", "cancelled"} and status == "FAILED":
+        locked_callback.processing_status = "processed"
+        db.commit()
+        return "duplicate"
     if locked_tx.confirmed_at is not None and locked_tx.status != "succeeded":
         raise GolinkReconciliationError("Inconsistent confirmed payment status")
 
