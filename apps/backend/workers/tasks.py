@@ -42,7 +42,7 @@ async def _recover(ids:list[str])->int:
 def recover_processing_transactions()->int:
     threshold=utcnow()-timedelta(seconds=30)
     with SessionLocal() as db:
-        ids=[r.id for r in db.scalars(select(ProviderTransaction).where(ProviderTransaction.status.in_(["processing","unknown"]),ProviderTransaction.created_at<=threshold).order_by(ProviderTransaction.created_at.asc()).limit(100)).all()]
+        ids=[r.id for r in db.scalars(select(ProviderTransaction).where(ProviderTransaction.status.in_(["processing","unknown"]),ProviderTransaction.provider != "golink",ProviderTransaction.created_at<=threshold).order_by(ProviderTransaction.created_at.asc()).limit(100)).all()]
     return asyncio.run(_recover(ids)) if ids else 0
 
 
