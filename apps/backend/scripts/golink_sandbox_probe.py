@@ -34,6 +34,8 @@ def expected_record() -> OriginalGolinkPayment:
     allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
     if len(payment_id) > 128 or any(char not in allowed for char in payment_id):
         raise ValueError("Invalid sandbox payment identifier")
+    if not os.environ["GOLINK_API_KEY"].startswith("glk_test_"):
+        raise ValueError("Sandbox API key required")
     return OriginalGolinkPayment(
         external_payment_id=payment_id,
         idempotency_key=os.environ["GOLINK_EXPECTED_KEY"],
