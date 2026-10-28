@@ -78,3 +78,24 @@ def prepare_rail_draft(
 
 async def execute_rail_draft(*args: Any, **kwargs: Any) -> None:
     raise GolinkRailNotCertified("Additional Golink rails await sandbox certification")
+
+
+# This is a deliberately static certification registry. Environment flags and
+# tenant configuration cannot override missing provider-contract evidence.
+RAIL_CERTIFICATION = {
+    "CARD": {"api_schema_verified": False, "tokenization_verified": False,
+             "webhook_verified": False, "reconciliation_verified": False},
+    "CPAY": {"api_schema_verified": False, "webhook_verified": False,
+             "reconciliation_verified": False},
+    "EFT": {"api_schema_verified": False, "webhook_verified": False,
+            "reconciliation_verified": False},
+    "PAYSLIP": {"api_schema_verified": False, "webhook_verified": False,
+                "reconciliation_verified": False},
+}
+
+
+def require_rail_certified(rail: str) -> None:
+    """Reject every unverified rail regardless of feature flags."""
+    evidence = RAIL_CERTIFICATION.get(rail)
+    if evidence is None or not all(value is True for value in evidence.values()):
+        raise GolinkRailNotCertified("Rail requires verified sandbox certification")
