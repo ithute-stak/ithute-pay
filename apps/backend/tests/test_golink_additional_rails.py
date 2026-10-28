@@ -74,3 +74,16 @@ def test_excessive_payload_nesting_rejected():
             rail="CPAY", amount=Decimal("3"), idempotency_key="existing",
             payer=nested, payee={"name": "Merchant"},
         )
+
+
+@pytest.mark.parametrize("rail", ["CARD", "CPAY", "EFT", "PAYSLIP"])
+def test_additional_rail_certification_gate_defaults_closed(rail):
+    from providers.golink.additional_rails import require_rail_certified
+    with pytest.raises(GolinkRailNotCertified, match="certification"):
+        require_rail_certified(rail)
+
+
+def test_unknown_rail_cannot_pass_certification_gate():
+    from providers.golink.additional_rails import require_rail_certified
+    with pytest.raises(GolinkRailNotCertified):
+        require_rail_certified("UNLISTED")
