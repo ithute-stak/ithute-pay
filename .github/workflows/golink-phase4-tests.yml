@@ -35,4 +35,7 @@ jobs:
           subprocess.check_call([sys.executable, "-m", "pip", "install", *dependencies, *dev_dependencies])
           PY
       - name: Golink regression tests
-        run: python -m pytest -q tests/test_golink_*.py
+        run: |
+          # The test database must always be created fresh in CI.
+          rm -f tests/paybridge_test.db tests/paybridge_test.db-wal tests/paybridge_test.db-shm
+          python -m pytest -q tests/test_golink_*.py
