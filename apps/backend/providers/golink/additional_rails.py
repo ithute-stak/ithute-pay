@@ -1,9 +1,10 @@
 """Disabled Phase 5 draft rail policy; NEVER submits provider payments."""
 from __future__ import annotations
 
-from copy import deepcopy
 from dataclasses import dataclass
 from decimal import Decimal
+from math import isfinite
+from types import MappingProxyType
 from typing import Any, Mapping
 
 from providers.golink.client import amount_to_minor
@@ -28,8 +29,8 @@ class RailDraft:
     currency: str
     amount_minor: int
     idempotency_key: str
-    payer: dict[str, Any]
-    payee: dict[str, Any]
+    payer: Mapping[str, Any]
+    payee: Mapping[str, Any]
 
 
 def _validate_party_fields(value: Any, *, depth: int = 0) -> None:
@@ -50,10 +51,19 @@ def _validate_party_fields(value: Any, *, depth: int = 0) -> None:
             raise GolinkRailNotCertified("Party payload exceeds safety limit")
         for nested in value:
             _validate_party_fields(nested, depth=depth + 1)
-    elif isinstance(value, float) and not __import__("math").isfinite(value):
+    elif isinstance(value, float) and not isfinite(value):
         raise GolinkRailNotCertified("Non-finite numeric field is forbidden")
     elif value is not None and not isinstance(value, (str, int, float, bool)):
         raise GolinkRailNotCertified("Unsupported party payload value")
+
+
+def _freeze_party(value: Any) -> Any:
+    """Detach and recursively freeze validated payment-party data."""
+    if isinstance(value, Mapping):
+        return MappingProxyType({key: _freeze_party(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_party(item) for item in value)
+    return value
 
 
 def prepare_rail_draft(
@@ -77,7 +87,7 @@ def prepare_rail_draft(
         rail=rail, direction=direction, currency=currency,
         amount_minor=amount_to_minor(Decimal(amount)),
         idempotency_key=idempotency_key,
-        payer=deepcopy(dict(payer)), payee=deepcopy(dict(payee)),
+        payer=_freeze_party(payer), payee=_freeze_party(payee),
     )
 
 
