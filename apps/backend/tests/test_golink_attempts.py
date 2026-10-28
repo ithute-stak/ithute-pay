@@ -139,3 +139,29 @@ def test_synchronous_provider_status_is_not_final_before_reconciliation(monkeypa
     assert tx.status == "processing"
     assert tx.provider_transaction_id == "golink-payment-1"
     assert tx.raw_response["status"] == provider_status
+
+
+@pytest.mark.parametrize("response", [
+    {}, {"status": "SUCCEEDED"}, {"id": "../unsafe", "status": "SUCCEEDED"},
+    {"id": "payment-1", "status": "UNEXPECTED"}, None,
+])
+def test_unverifiable_synchronous_result_quarantined_without_retry(monkeypatch, response):
+    import asyncio
+
+    monkeypatch.setenv("GOLINK_COLLECTIONS_ENABLED", "true")
+    payment, tx = fixtures()
+    db = FakeSession()
+    db.commit = lambda: None
+    prepare_collection_attempt(db, payment=payment, transaction=tx,
+                               rail="MPESA", payee_name="Merchant")
+    calls = []
+    class Client:
+        async def create_payment(self, **kwargs):
+            calls.append(kwargs["idempotency_key"])
+            return response
+
+    with pytest.raises(GolinkCollectionAttemptError, match="Unverifiable"):
+        asyncio.run(send_prepared_collection(db, transaction=tx, client=Client()))
+    assert calls == ["stable-1"]
+    assert tx.status == "unknown"
+    assert not getattr(tx, "provider_transaction_id", None)
