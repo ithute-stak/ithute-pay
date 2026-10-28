@@ -61,3 +61,13 @@ def test_probe_rejects_unsafe_identifier_before_network(monkeypatch, payment_id)
     monkeypatch.setenv("GOLINK_EXPECTED_RAIL", "MPESA")
     with pytest.raises(ValueError, match="sandbox payment identifier"):
         probe.expected_record()
+
+
+def test_probe_rejects_live_key_before_network(monkeypatch):
+    monkeypatch.setenv("GOLINK_API_KEY", "glk_live_do_not_use")
+    monkeypatch.setenv("GOLINK_SANDBOX_PAYMENT_ID", "existing-payment-1")
+    monkeypatch.setenv("GOLINK_EXPECTED_KEY", "original-attempt")
+    monkeypatch.setenv("GOLINK_EXPECTED_AMOUNT_MINOR", "500")
+    monkeypatch.setenv("GOLINK_EXPECTED_RAIL", "MPESA")
+    with pytest.raises(ValueError, match="Sandbox API key required"):
+        probe.expected_record()
