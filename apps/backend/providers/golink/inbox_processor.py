@@ -87,6 +87,16 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
         return "duplicate"
     if locked_tx.provider_transaction_id != payment_id or locked_tx.provider != "golink":
         raise GolinkReconciliationError("Provider transaction changed during reconciliation")
+    locked_payment = db.scalar(select(PaymentIntent).where(
+        PaymentIntent.id == locked_tx.resource_id).with_for_update())
+    if (locked_payment is None or locked_payment.merchant_id != locked_tx.merchant_id
+            or locked_payment.application_id != locked_tx.application_id
+            or locked_payment.amount != locked_tx.amount
+            or locked_payment.currency != locked_tx.currency):
+        raise GolinkReconciliationError("Payment record changed during reconciliation")
+    if locked_tx.confirmed_at is not None and locked_tx.status != "succeeded":
+        raise GolinkReconciliationError("Inconsistent confirmed payment status")
+
     if locked_tx.status == "succeeded" and status != "SUCCEEDED":
         # Never revert a confirmed success on a delayed/out-of-order event.
         locked_callback.processing_status = "processed"
@@ -105,6 +115,8 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
         # Existing payment ledger handling of cancelled status must be certified
         # separately before applying financial transitions.
         raise GolinkReconciliationError("Cancellation handling awaiting certification")
+    if locked_tx.status in {"failed", "cancelled"} and status == "SUCCEEDED":
+        raise GolinkReconciliationError("Conflicting terminal state requires manual review")
     result = normalize_payment(raw)
     apply_provider_result(db, transaction=locked_tx, result=result)
     locked_callback.processing_status = "processed"
