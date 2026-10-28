@@ -29,8 +29,13 @@ def expected_record() -> OriginalGolinkPayment:
     missing = [key for key in required if not os.environ.get(key)]
     if missing:
         raise ValueError("Missing required sandbox probe configuration: " + ", ".join(missing))
+    # Reject invalid URL identifiers before any request leaves the sandbox probe.
+    payment_id = os.environ["GOLINK_SANDBOX_PAYMENT_ID"]
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    if len(payment_id) > 128 or any(char not in allowed for char in payment_id):
+        raise ValueError("Invalid sandbox payment identifier")
     return OriginalGolinkPayment(
-        external_payment_id=os.environ["GOLINK_SANDBOX_PAYMENT_ID"],
+        external_payment_id=payment_id,
         idempotency_key=os.environ["GOLINK_EXPECTED_KEY"],
         amount_minor=int(os.environ["GOLINK_EXPECTED_AMOUNT_MINOR"]),
         currency="LSL", direction="DEBIT",
