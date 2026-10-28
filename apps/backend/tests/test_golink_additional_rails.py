@@ -43,3 +43,34 @@ def test_no_other_rail_or_credit_direction_is_enabled():
             rail="EFT", direction="CREDIT", amount=Decimal("10"),
             idempotency_key="key", payer={}, payee={},
         )
+
+
+@pytest.mark.parametrize("field", ["card-number", "security_code", "CVV2", "expirationDate", "track_2"])
+def test_nested_sensitive_fields_rejected(field):
+    with pytest.raises(GolinkRailNotCertified, match="credentials"):
+        prepare_rail_draft(
+            rail="CARD", amount=Decimal("2.00"), idempotency_key="existing",
+            payer={"account": [{"metadata": {field: "forbidden"}}]},
+            payee={"name": "Merchant"},
+        )
+
+
+def test_draft_nested_party_is_snapshotted():
+    payer = {"identity": {"reference": "original"}}
+    draft = prepare_rail_draft(
+        rail="EFT", amount=Decimal("2"), idempotency_key="existing",
+        payer=payer, payee={"name": "Merchant"},
+    )
+    payer["identity"]["reference"] = "mutated"
+    assert draft.payer["identity"]["reference"] == "original"
+
+
+def test_excessive_payload_nesting_rejected():
+    nested = {"reference": "safe"}
+    for _ in range(10):
+        nested = {"data": nested}
+    with pytest.raises(GolinkRailNotCertified, match="safety limit"):
+        prepare_rail_draft(
+            rail="CPAY", amount=Decimal("3"), idempotency_key="existing",
+            payer=nested, payee={"name": "Merchant"},
+        )
