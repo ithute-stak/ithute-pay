@@ -124,3 +124,29 @@ def test_long_idempotency_reference_is_rejected():
             rail="CARD", amount=Decimal("2.00"), idempotency_key="x" * 129,
             payer={}, payee={"name": "Merchant"},
         )
+
+
+def test_even_forged_certification_flags_cannot_execute_payment(monkeypatch):
+    """No environment or runtime certification override may enable the draft stub."""
+    import providers.golink.additional_rails as rails
+
+    class ExplodingDependency:
+        def __getattr__(self, name):
+            raise AssertionError("Draft attempted external operation")
+
+    monkeypatch.setattr(rails, "RAIL_CERTIFICATION", {
+        "CARD": {
+            "api_schema_verified": True,
+            "tokenization_verified": True,
+            "webhook_verified": True,
+            "reconciliation_verified": True,
+        },
+    })
+    draft = rails.prepare_rail_draft(
+        rail="CARD", amount=Decimal("1.00"), idempotency_key="test-stable",
+        payer={"reference": "test-payer"}, payee={"name": "Merchant"},
+    )
+    with pytest.raises(rails.GolinkRailNotCertified, match="sandbox certification"):
+        asyncio.run(rails.execute_rail_draft(
+            draft, client=ExplodingDependency(), db=ExplodingDependency(),
+        ))
