@@ -124,7 +124,9 @@ async def send_prepared_collection(
         raise GolinkCollectionAttemptError("Golink response missing payment ID")
     transaction.provider_transaction_id = result.transaction_id
     # Even synchronous success cannot post a ledger entry here.
-    transaction.status = "processing" if result.status == "succeeded" else result.status
+    # No provider-declared terminal result is final until authenticated GET
+    # reconciliation verifies the original intent and locks ledger posting.
+    transaction.status = "processing"
     transaction.raw_response = response
     db.add(transaction)
     db.commit()
