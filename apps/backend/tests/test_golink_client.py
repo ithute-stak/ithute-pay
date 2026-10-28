@@ -99,3 +99,38 @@ def test_uncertified_rail_rejected_before_network_at_low_level_client(rail):
             amount_minor=1000, currency="LSL", payer={}, payee={},
             transport=httpx.MockTransport(handler)))
     assert calls == []
+
+
+@pytest.mark.parametrize("rail", ["MPESA", "ECOCASH"])
+def test_credit_payouts_cannot_bypass_collection_only_adapter(rail):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise AssertionError("Uncertified payout reached network")
+    with pytest.raises(ValueError, match="Unsupported Golink direction or rail"):
+        asyncio.run(GolinkClient("glk_test_example").create_payment(
+            direction="CREDIT", rail=rail, idempotency_key="original-key",
+            amount_minor=1000, currency="LSL", payer={}, payee={},
+            transport=httpx.MockTransport(handler)))
+    assert not calls
+
+
+def test_uncertified_stored_payment_method_is_rejected_before_network():
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise AssertionError("Uncertified stored payment method reached network")
+    with pytest.raises(ValueError, match="not certified"):
+        asyncio.run(GolinkClient("glk_test_example").create_payment(
+            direction="DEBIT", rail="MPESA", idempotency_key="original-key",
+            amount_minor=1000, currency="LSL", payer={}, payee={},
+            stored_payment_method_id="unverified-token",
+            transport=httpx.MockTransport(handler)))
+    assert not calls
+
+
+def test_missing_idempotency_key_type_rejected_locally():
+    with pytest.raises(ValueError, match="idempotency"):
+        asyncio.run(GolinkClient("glk_test_example").create_payment(
+            direction="DEBIT", rail="MPESA", idempotency_key=None,
+            amount_minor=1000, currency="LSL", payer={}, payee={}))
