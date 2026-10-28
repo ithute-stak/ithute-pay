@@ -88,6 +88,18 @@ async def send_prepared_collection(
         raise GolinkCollectionAttemptError("Persisted amount differs from original transaction")
     if payload.get("idempotencyKey") != transaction.transaction_reference:
         raise GolinkCollectionAttemptError("Idempotency key mismatch")
+    # Validate the persisted intent before changing state or sending money.
+    # The low-level API applies the same constraints; validation here ensures
+    # a corrupted DB record cannot be marked processing before rejection.
+    reference = payload.get("idempotencyKey")
+    if (not isinstance(reference, str) or not reference or len(reference) > 128
+            or any(ord(char) < 33 or ord(char) > 126 for char in reference)):
+        raise GolinkCollectionAttemptError("Invalid persisted idempotency reference")
+    payer, payee = payload.get("payer"), payload.get("payee")
+    if (not isinstance(payer, dict) or not isinstance(payer.get("phone"), str)
+            or not payer["phone"].strip() or not isinstance(payee, dict)
+            or not isinstance(payee.get("name"), str) or not payee["name"].strip()):
+        raise GolinkCollectionAttemptError("Invalid persisted collection parties")
     # Persist first. This function never generates a new attempt on an unknown outcome.
     transaction.status = "processing"
     db.add(transaction)
