@@ -36,6 +36,8 @@ async def reconcile_golink_inbox_item(db: Session, callback_id: str, client: Gol
     The original recorded payment must contain immutable Golink rail and original
     idempotency key in raw_request. Otherwise this function fails closed.
     """
+    if os.environ.get("GOLINK_RECONCILIATION_ENABLED", "").lower() != "true":
+        raise GolinkReconciliationError("Golink reconciliation is disabled pending certification")
     # No remote transaction should be queried for an unverified/non-Golink event.
     callback = db.get(ProviderCallbackLog, callback_id)
     if callback is None or callback.provider != "golink" or callback.callback_type != "outbound_webhook":
