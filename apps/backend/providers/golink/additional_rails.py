@@ -76,7 +76,13 @@ def prepare_rail_draft(
     )
 
 
-async def execute_rail_draft(*args: Any, **kwargs: Any) -> None:
+async def execute_rail_draft(draft: RailDraft, *, client: Any = None, db: Any = None) -> None:
+    """Non-executable by design, even when injected with a provider client."""
+    if not isinstance(draft, RailDraft):
+        raise GolinkRailNotCertified("Unrecognised rail instruction")
+    require_rail_certified(draft.rail)
+    # There is deliberately no call to client.create_payment here. A new
+    # certified executor requires reviewed rail contracts and its own tests.
     raise GolinkRailNotCertified("Additional Golink rails await sandbox certification")
 
 
