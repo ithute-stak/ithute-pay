@@ -134,3 +134,18 @@ def test_missing_idempotency_key_type_rejected_locally():
         asyncio.run(GolinkClient("glk_test_example").create_payment(
             direction="DEBIT", rail="MPESA", idempotency_key=None,
             amount_minor=1000, currency="LSL", payer={}, payee={}))
+
+
+@pytest.mark.parametrize("body", ["not-json", "", "null", "[]"])
+def test_invalid_or_nonobject_provider_response_fails_closed(body):
+    def handler(request):
+        return httpx.Response(200, text=body)
+    with pytest.raises(GolinkError):
+        asyncio.run(GolinkClient("glk_test_example").get_payment(
+            "payment-123", transport=httpx.MockTransport(handler)))
+
+
+@pytest.mark.parametrize("payment_id", ["payment#fragment", "bad%2Fid", "with space", "id:other", "x" * 129])
+def test_get_payment_rejects_other_unsafe_identifiers(payment_id):
+    with pytest.raises(ValueError, match="Invalid Golink payment ID"):
+        asyncio.run(GolinkClient("glk_test_example").get_payment(payment_id))
