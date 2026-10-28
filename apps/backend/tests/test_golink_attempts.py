@@ -116,3 +116,26 @@ def test_corrupted_persisted_collection_never_transitions_or_posts(monkeypatch, 
     with pytest.raises(GolinkCollectionAttemptError, match=match):
         asyncio.run(send_prepared_collection(db, transaction=tx, client=NoNetworkClient()))
     assert tx.status == "created"
+
+
+@pytest.mark.parametrize("provider_status", ["SUCCEEDED", "FAILED", "CANCELLED", "PROCESSING"])
+def test_synchronous_provider_status_is_not_final_before_reconciliation(monkeypatch, provider_status):
+    import asyncio
+
+    monkeypatch.setenv("GOLINK_COLLECTIONS_ENABLED", "true")
+    payment, tx = fixtures()
+    db = FakeSession()
+    db.commit = lambda: None
+    prepare_collection_attempt(db, payment=payment, transaction=tx,
+                               rail="MPESA", payee_name="Merchant")
+
+    class MockClient:
+        async def create_payment(self, **kwargs):
+            assert kwargs["idempotency_key"] == "stable-1"
+            return {"id": "golink-payment-1", "status": provider_status}
+
+    result = asyncio.run(send_prepared_collection(db, transaction=tx, client=MockClient()))
+    assert result == "processing"
+    assert tx.status == "processing"
+    assert tx.provider_transaction_id == "golink-payment-1"
+    assert tx.raw_response["status"] == provider_status
