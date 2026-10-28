@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from decimal import Decimal
+from math import isfinite
 from typing import Any
 
 import httpx
@@ -48,6 +49,8 @@ class GolinkClient:
             raise GolinkConfigurationError("Invalid Golink environment")
         if not self.api_key or not self.api_key.startswith(prefixes[self.environment]):
             raise GolinkConfigurationError("Golink key does not match environment")
+        if not isfinite(self.timeout_seconds) or not 0 < self.timeout_seconds <= 120:
+            raise GolinkConfigurationError("Golink timeout must be finite and between 0 and 120 seconds")
 
     @property
     def base_url(self) -> str:
