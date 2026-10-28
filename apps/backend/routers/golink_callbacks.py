@@ -9,6 +9,7 @@ import json
 import os
 
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -54,7 +55,14 @@ async def receive_golink_webhook(request: Request, db: Session = Depends(get_db)
         db.commit()
     except IntegrityError:
         db.rollback()
-        # Only this endpoint writes this provider/type; a matching payload hash
-        # is an already received event. No second accounting update occurs.
+        # Fail closed unless the conflict is demonstrably an identical webhook.
+        # A different integrity violation must never be acknowledged as delivered.
+        existing = db.scalar(select(ProviderCallbackLog.id).where(
+            ProviderCallbackLog.provider == "golink",
+            ProviderCallbackLog.callback_type == "outbound_webhook",
+            ProviderCallbackLog.payload_hash == fingerprint,
+        ))
+        if existing is None:
+            raise
         return {"received": True, "duplicate": True}
     return {"received": True}
