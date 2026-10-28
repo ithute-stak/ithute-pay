@@ -8,16 +8,44 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import or_, select
 
 from database.models import ProviderCallbackLog
 from database.session import SessionLocal
 from providers.golink.client import GolinkClient
 from providers.golink.inbox_processor import reconcile_golink_inbox_item
+from utils.helpers import utcnow
 
 logger = logging.getLogger(__name__)
 BATCH_LIMIT = 20
+RETRY_DELAYS_SECONDS = (60, 300, 1800, 7200, 28800)
+
+
+def retry_status(attempts: int) -> str:
+    return "quarantined" if attempts >= len(RETRY_DELAYS_SECONDS) else f"retry_{attempts}"
+
+
+def attempt_from_status(status: str) -> int:
+    if status == "received":
+        return 0
+    if status.startswith("retry_") and status[6:].isdigit():
+        return int(status[6:])
+    raise ValueError("Unrecognized Golink retry state")
+
+
+def retry_due(row, now) -> bool:
+    if row.processing_status == "received":
+        return True
+    attempts = attempt_from_status(row.processing_status)
+    if not 1 <= attempts <= len(RETRY_DELAYS_SECONDS):
+        return False
+    updated = row.updated_at
+    if updated.tzinfo is None and now.tzinfo is not None:
+        now = now.replace(tzinfo=None)
+    return updated + timedelta(seconds=RETRY_DELAYS_SECONDS[attempts - 1]) <= now
+
 
 
 def golink_worker_enabled() -> bool:
@@ -41,16 +69,26 @@ async def reconcile_golink_batch() -> dict[str, int]:
         ids = list(db.scalars(select(ProviderCallbackLog.id).where(
             ProviderCallbackLog.provider == "golink",
             ProviderCallbackLog.callback_type == "outbound_webhook",
-            ProviderCallbackLog.processing_status == "received",
+            ProviderCallbackLog.processing_status.in_(["received", "retry_1", "retry_2", "retry_3", "retry_4"]),
         ).order_by(ProviderCallbackLog.created_at.asc()).limit(BATCH_LIMIT)).all())
 
     for callback_id in ids:
         with SessionLocal() as db:
+            row = db.get(ProviderCallbackLog, callback_id)
+            if row is None or not retry_due(row, utcnow()):
+                continue
             try:
                 result = await reconcile_golink_inbox_item(db, callback_id, client)
                 counters["pending" if result == "pending" else "processed"] += 1
             except Exception as exc:
                 db.rollback()
+                retry_row = db.get(ProviderCallbackLog, callback_id)
+                if retry_row and retry_row.processing_status != "processed":
+                    attempt = attempt_from_status(retry_row.processing_status) + 1
+                    retry_row.processing_status = retry_status(attempt)
+                    retry_row.error_message = type(exc).__name__[:100]
+                    db.add(retry_row)
+                    db.commit()
                 counters["failed"] += 1
                 # Log error class, never exception body (which could reveal PII).
                 logger.error("Golink callback reconciliation failed: %s", type(exc).__name__)
