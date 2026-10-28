@@ -77,7 +77,9 @@ class GolinkClient:
                              amount_minor: int, currency: str, payer: dict[str, Any],
                              payee: dict[str, Any], stored_payment_method_id: str | None = None,
                              transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
-        if direction not in {"DEBIT", "CREDIT"} or rail not in {"MPESA", "ECOCASH", "CARD", "CPAY", "EFT", "PAYSLIP"}:
+        # Additional rails have no verified Golink contract. Block even direct
+        # calls to this lower-level client until a separate certified adapter exists.
+        if direction not in {"DEBIT", "CREDIT"} or rail not in {"MPESA", "ECOCASH"}:
             raise ValueError("Unsupported Golink direction or rail")
         if not idempotency_key.strip() or isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
             raise ValueError("Valid idempotency key and positive minor-unit amount required")
