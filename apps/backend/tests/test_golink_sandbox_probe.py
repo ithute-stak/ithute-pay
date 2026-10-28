@@ -50,3 +50,14 @@ def test_probe_failure_does_not_print_secrets(monkeypatch, capsys):
 
 async def _fail():
     raise GolinkError(401, "glk_test_secret_value")
+
+
+@pytest.mark.parametrize("payment_id", ["../unsafe", "id?x=1", "id#fragment", "x" * 129])
+def test_probe_rejects_unsafe_identifier_before_network(monkeypatch, payment_id):
+    monkeypatch.setenv("GOLINK_API_KEY", "glk_test_not_real")
+    monkeypatch.setenv("GOLINK_SANDBOX_PAYMENT_ID", payment_id)
+    monkeypatch.setenv("GOLINK_EXPECTED_KEY", "original-attempt")
+    monkeypatch.setenv("GOLINK_EXPECTED_AMOUNT_MINOR", "500")
+    monkeypatch.setenv("GOLINK_EXPECTED_RAIL", "MPESA")
+    with pytest.raises(ValueError, match="sandbox payment identifier"):
+        probe.expected_record()
