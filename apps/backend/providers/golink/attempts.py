@@ -75,11 +75,18 @@ async def send_prepared_collection(
         raise GolinkCollectionAttemptError("Golink collections disabled pending certification")
     if transaction.provider != "golink" or not transaction.raw_request:
         raise GolinkCollectionAttemptError("Missing persisted original attempt")
-    if transaction.status not in {"created", "unknown"}:
-        raise GolinkCollectionAttemptError("Attempt already submitted")
+    if transaction.status != "created":
+        raise GolinkCollectionAttemptError("Uncertain or submitted attempt must be reconciled")
     payload = transaction.raw_request
+    if not isinstance(payload, dict) or set(payload) != {"direction", "rail", "idempotencyKey", "amountMinor", "currency", "payer", "payee"}:
+        raise GolinkCollectionAttemptError("Invalid persisted request")
+    if payload.get("direction") != "DEBIT" or payload.get("rail") not in {"MPESA", "ECOCASH"} or payload.get("currency") != "LSL":
+        raise GolinkCollectionAttemptError("Unsupported persisted collection")
+    if amount_to_minor(Decimal(transaction.amount)) != payload.get("amountMinor") or transaction.currency != "LSL":
+        raise GolinkCollectionAttemptError("Persisted amount differs from original transaction")
     if payload.get("idempotencyKey") != transaction.transaction_reference:
         raise GolinkCollectionAttemptError("Idempotency key mismatch")
+    # Persist first. This function never generates a new attempt on an unknown outcome.
     transaction.status = "processing"
     db.add(transaction)
     db.commit()
