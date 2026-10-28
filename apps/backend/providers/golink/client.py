@@ -68,7 +68,10 @@ class GolinkClient:
             except httpx.RequestError as exc:
                 # An uncertain POST result must be reconciled, not retried with a new key.
                 raise GolinkError(0, "Golink network outcome unknown; reconcile original request") from exc
-        result = response.json()
+        try:
+            result = response.json()
+        except ValueError:
+            raise GolinkError(response.status_code, "Invalid Golink JSON response") from None
         if not isinstance(result, dict):
             raise GolinkError(response.status_code, "Unexpected Golink response shape")
         return result
@@ -92,6 +95,8 @@ class GolinkClient:
         return await self._request("POST", "payments", payload=payload, transport=transport)
 
     async def get_payment(self, payment_id: str, *, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
-        if not payment_id or "/" in payment_id or "?" in payment_id:
+        if (not isinstance(payment_id, str) or not payment_id
+                or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in payment_id)
+                or len(payment_id) > 128):
             raise ValueError("Invalid Golink payment ID")
         return await self._request("GET", f"payments/{payment_id}", transport=transport)
