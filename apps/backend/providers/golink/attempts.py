@@ -116,13 +116,19 @@ async def send_prepared_collection(
         db.add(transaction)
         db.commit()
         raise
-    result = normalize_payment(response)
-    if not result.transaction_id:
+    # An HTTP success with an invalid or unfamiliar body is still an unknown
+    # financial outcome; never mark it failed, retry automatically, or post funds.
+    result = normalize_payment(response) if isinstance(response, dict) else None
+    payment_id = result.transaction_id if result is not None else None
+    allowed = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-"
+    if (result is None or result.status == "unknown"
+            or not isinstance(payment_id, str) or not payment_id
+            or len(payment_id) > 128 or any(ch not in allowed for ch in payment_id)):
         transaction.status = "unknown"
         db.add(transaction)
         db.commit()
-        raise GolinkCollectionAttemptError("Golink response missing payment ID")
-    transaction.provider_transaction_id = result.transaction_id
+        raise GolinkCollectionAttemptError("Unverifiable Golink response; reconcile original attempt")
+    transaction.provider_transaction_id = payment_id
     # Even synchronous success cannot post a ledger entry here.
     # No provider-declared terminal result is final until authenticated GET
     # reconciliation verifies the original intent and locks ledger posting.
