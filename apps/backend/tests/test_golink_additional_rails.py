@@ -150,3 +150,18 @@ def test_even_forged_certification_flags_cannot_execute_payment(monkeypatch):
         asyncio.run(rails.execute_rail_draft(
             draft, client=ExplodingDependency(), db=ExplodingDependency(),
         ))
+
+
+def test_phase5_certification_registry_matches_documented_blocked_rails():
+    """Prevent accidental activation without updating documented evidence."""
+    from pathlib import Path
+    from providers.golink.additional_rails import PHASE5_RAILS, RAIL_CERTIFICATION
+
+    doc = (Path(__file__).resolve().parents[3] / "docs" /
+           "GOLINK_PHASE5_RAIL_CERTIFICATION.md").read_text(encoding="utf-8")
+    assert PHASE5_RAILS == set(RAIL_CERTIFICATION)
+    for rail in PHASE5_RAILS:
+        assert f"| {rail} | Pending | Pending | Pending | Pending | Pending | BLOCKED |" in doc
+        assert RAIL_CERTIFICATION[rail]
+        assert not any(RAIL_CERTIFICATION[rail].values())
+    assert "No payment execution permitted" in doc
