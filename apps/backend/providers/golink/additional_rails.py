@@ -39,6 +39,8 @@ def _validate_party_fields(value: Any, *, depth: int = 0) -> None:
         if len(value) > 64:
             raise GolinkRailNotCertified("Party payload exceeds safety limit")
         for key, nested in value.items():
+            if not isinstance(key, str):
+                raise GolinkRailNotCertified("Party field names must be strings")
             normalized = "".join(c for c in str(key).lower() if c.isalnum())
             if normalized in FORBIDDEN:
                 raise GolinkRailNotCertified("Raw card or authentication credentials are forbidden")
@@ -48,6 +50,8 @@ def _validate_party_fields(value: Any, *, depth: int = 0) -> None:
             raise GolinkRailNotCertified("Party payload exceeds safety limit")
         for nested in value:
             _validate_party_fields(nested, depth=depth + 1)
+    elif isinstance(value, float) and not __import__("math").isfinite(value):
+        raise GolinkRailNotCertified("Non-finite numeric field is forbidden")
     elif value is not None and not isinstance(value, (str, int, float, bool)):
         raise GolinkRailNotCertified("Unsupported party payload value")
 
@@ -62,13 +66,13 @@ def prepare_rail_draft(
         raise GolinkRailNotCertified("Rail not part of Phase 5 draft scope")
     if direction != "DEBIT" or currency != "LSL":
         raise GolinkRailNotCertified("Only LSL debit drafts are supported")
-    if not isinstance(idempotency_key, str) or not idempotency_key.strip():
+    if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 128:
         raise ValueError("An existing immutable idempotency key is required")
     if not isinstance(payer, Mapping) or not isinstance(payee, Mapping):
         raise TypeError("Payer and payee must be mappings")
     _validate_party_fields(payer)
     _validate_party_fields(payee)
-    return RailDraft(
+    # String-only keys and JSON-compatible finite values avoid ambiguous,\n    # lossy or unbounded serialization in future provider contracts.\n    return RailDraft(
         rail=rail, direction=direction, currency=currency,
         amount_minor=amount_to_minor(Decimal(amount)),
         idempotency_key=idempotency_key,
