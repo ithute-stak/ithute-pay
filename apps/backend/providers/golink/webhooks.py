@@ -22,3 +22,16 @@ def verify_golink_signature(body: bytes, signature: str | None, secret: str) -> 
     if not hmac.compare_digest(supplied.lower(), expected):
         raise InvalidGolinkSignature("Invalid Golink signature")
     return hashlib.sha256(body).hexdigest()
+
+
+def extract_payment_id(event: object) -> str:
+    """Require the expected payment identity before accepting a signed callback."""
+    if not isinstance(event, dict):
+        raise ValueError("Invalid Golink webhook event")
+    data = event.get("data")
+    payment_id = data.get("id") if isinstance(data, dict) else None
+    if (not isinstance(payment_id, str) or not payment_id
+            or len(payment_id) > 128
+            or any(char not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_-" for char in payment_id)):
+        raise ValueError("Invalid Golink webhook payment identifier")
+    return payment_id
