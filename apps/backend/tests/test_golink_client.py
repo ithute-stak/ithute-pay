@@ -51,3 +51,37 @@ def test_timeout_does_not_retry_or_change_idempotency_key():
     with pytest.raises(GolinkError, match="outcome unknown"):
         asyncio.run(run())
     assert len(attempts) == 1
+
+
+def test_get_payment_uses_exact_sandbox_endpoint_and_api_key():
+    observed = []
+    def handler(request):
+        observed.append(request)
+        return httpx.Response(200, json={
+            "id": "payment-123", "status": "SUCCEEDED",
+            "idempotencyKey": "attempt-1", "amountMinor": 1000,
+            "currency": "LSL", "direction": "DEBIT", "rail": "MPESA",
+        })
+    record = asyncio.run(GolinkClient("glk_test_example").get_payment(
+        "payment-123", transport=httpx.MockTransport(handler)))
+    assert record["id"] == "payment-123"
+    assert observed[0].method == "GET"
+    assert str(observed[0].url) == "https://sandbox.transact.golink.co.ls/api/payments/payment-123"
+    assert observed[0].headers["X-Api-Key"] == "glk_test_example"
+
+
+@pytest.mark.parametrize("invalid_id", ["", "../other", "id?admin=true", "a/b"])
+def test_get_payment_rejects_unsafe_payment_ids(invalid_id):
+    with pytest.raises(ValueError):
+        asyncio.run(GolinkClient("glk_test_example").get_payment(invalid_id))
+
+
+def test_non_200_response_is_safe_and_does_not_leak_key():
+    key = "glk_test_example"
+    def handler(request):
+        return httpx.Response(401, json={"message": f"invalid key {key}"})
+    with pytest.raises(GolinkError) as exc_info:
+        asyncio.run(GolinkClient(key).get_payment(
+            "payment-123", transport=httpx.MockTransport(handler)))
+    assert exc_info.value.status_code == 401
+    assert key not in str(exc_info.value)
