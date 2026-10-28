@@ -87,3 +87,19 @@ def test_unknown_rail_cannot_pass_certification_gate():
     from providers.golink.additional_rails import require_rail_certified
     with pytest.raises(GolinkRailNotCertified):
         require_rail_certified("UNLISTED")
+
+
+@pytest.mark.parametrize("rail", ["CARD", "CPAY", "EFT", "PAYSLIP"])
+def test_uncertified_rail_does_not_call_provider_or_database(rail):
+    class ExplodingDependency:
+        def __getattr__(self, name):
+            raise AssertionError("Uncertified rail attempted an external operation")
+
+    draft = prepare_rail_draft(
+        rail=rail, amount=Decimal("5.00"), idempotency_key="stable-attempt",
+        payer={"reference": "payer"}, payee={"name": "Merchant"},
+    )
+    with pytest.raises(GolinkRailNotCertified, match="certification"):
+        asyncio.run(execute_rail_draft(
+            draft, client=ExplodingDependency(), db=ExplodingDependency(),
+        ))
