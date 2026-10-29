@@ -178,3 +178,20 @@ def test_invalid_golink_timeout_rejected_before_network(timeout):
 
 def test_valid_bounded_golink_timeout():
     assert GolinkClient("glk_test_example", timeout_seconds=30).timeout_seconds == 30
+
+
+@pytest.mark.parametrize("rail", ["MPESA", "ECOCASH"])
+def test_uncertified_live_post_is_blocked_even_with_live_key(rail):
+    calls = []
+    def handler(request):
+        calls.append(request)
+        raise AssertionError("Uncertified live payment reached network")
+
+    client = GolinkClient("glk_live_example", environment="production")
+    with pytest.raises(GolinkConfigurationError, match="not certified"):
+        asyncio.run(client.create_payment(
+            direction="DEBIT", rail=rail, idempotency_key="safe-attempt",
+            amount_minor=1000, currency="LSL",
+            payer={"phone": "26650000000"}, payee={"name": "Test Merchant"},
+            transport=httpx.MockTransport(handler)))
+    assert calls == []
