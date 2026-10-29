@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from hashlib import sha256
+import json
 
 from integrations.rail_routing_policy import RailRoutingPolicy
 from integrations.rail_routing_settings import RoutingConfiguration
@@ -58,3 +60,33 @@ def propose_rail_routing_change(
         rail=rail, actor_id=actor_id.strip(), reason=reason.strip(),
         proposed_at=datetime.now(timezone.utc), before=before, after=after,
     )
+
+
+def routing_change_audit_record(change: RailRoutingChange) -> dict[str, object]:
+    """Create a deterministic, JSON-compatible audit event for durable storage.
+
+    This does not write the database or approve/activate a provider. The caller
+    must persist this record atomically with any future approved setting change.
+    """
+    if not isinstance(change, RailRoutingChange):
+        raise RoutingChangeRejected("Invalid routing change")
+    def policy_dict(policy: RailRoutingPolicy) -> dict[str, bool]:
+        return {
+            "direct_certified": policy.direct_certified,
+            "direct_enabled": policy.direct_enabled,
+            "golink_certified": policy.golink_certified,
+            "golink_enabled_for_new": policy.golink_enabled_for_new,
+        }
+
+    event = {
+        "type": "rail_routing_change_proposed",
+        "rail": change.rail,
+        "actor_id": change.actor_id,
+        "reason": change.reason,
+        "proposed_at": change.proposed_at.isoformat(),
+        "before": policy_dict(change.before),
+        "after": policy_dict(change.after),
+        "activated": False,
+    }
+    canonical = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True)
+    return {**event, "sha256": sha256(canonical.encode("utf-8")).hexdigest()}
