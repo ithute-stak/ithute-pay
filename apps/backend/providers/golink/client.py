@@ -83,6 +83,10 @@ class GolinkClient:
                              amount_minor: int, currency: str, payer: dict[str, Any],
                              payee: dict[str, Any], stored_payment_method_id: str | None = None,
                              transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
+        # Fail closed: live Golink payment initiation requires a separately
+        # reviewed certification release. Environment flags alone cannot enable it.
+        if self.environment != "sandbox":
+            raise GolinkConfigurationError("Golink production payment initiation is not certified")
         # Additional rails have no verified Golink contract. Block even direct
         # calls to this lower-level client until a separate certified adapter exists.
         if direction != "DEBIT" or rail not in {"MPESA", "ECOCASH"}:
