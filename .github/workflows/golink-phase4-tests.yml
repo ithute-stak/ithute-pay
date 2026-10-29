@@ -8,6 +8,7 @@ on:
       - 'apps/backend/integrations/rail_routing_settings.py'
       - 'apps/backend/integrations/rail_routing_changes.py'
       - 'apps/backend/integrations/rail_routing_audit.py'
+      - 'apps/backend/integrations/rail_routing_review.py'
       - 'apps/backend/providers/mpesa/factory.py'
       - 'apps/backend/providers/ecocash/factory.py'
       - 'docs/GOLINK_*.md'
@@ -44,7 +45,7 @@ jobs:
           PY
       - name: Compile Golink Python modules and tests
         run: |
-          python -m compileall -q providers/golink integrations/rail_routing_policy.py integrations/rail_routing_settings.py integrations/rail_routing_changes.py integrations/rail_routing_audit.py tests/test_golink_*.py workers/golink_reconciliation.py
+          python -m compileall -q providers/golink integrations/rail_routing_policy.py integrations/rail_routing_settings.py integrations/rail_routing_changes.py integrations/rail_routing_audit.py integrations/rail_routing_review.py tests/test_golink_*.py workers/golink_reconciliation.py
       - name: Golink regression tests
         run: |
           # The test database must always be created fresh in CI.
