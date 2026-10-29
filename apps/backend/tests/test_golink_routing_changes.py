@@ -2,7 +2,7 @@
 import pytest
 
 from integrations.rail_routing_changes import (
-    RoutingChangeRejected, propose_rail_routing_change,
+    RoutingChangeRejected, propose_rail_routing_change, routing_change_audit_record,
 )
 from integrations.rail_routing_policy import RailRoutingPolicy
 from integrations.rail_routing_settings import RoutingConfiguration
@@ -51,3 +51,21 @@ def test_unsafe_or_unauditable_change_rejected(overrides):
 def test_other_rail_does_not_inherit_mpesa_certification():
     with pytest.raises(RoutingChangeRejected, match="Direct provider certification"):
         propose(rail="ECOCASH", certified_direct_evidence=False)
+
+
+def test_audit_event_is_deterministic_and_non_activating():
+    event = propose()
+    first = routing_change_audit_record(event)
+    second = routing_change_audit_record(event)
+    assert first == second
+    assert first["activated"] is False
+    assert first["before"]["direct_enabled"] is False
+    assert first["after"]["direct_enabled"] is True
+    assert len(first["sha256"]) == 64
+    import json
+    json.dumps(first)
+
+
+def test_audit_event_rejects_invalid_source():
+    with pytest.raises(RoutingChangeRejected):
+        routing_change_audit_record(None)
