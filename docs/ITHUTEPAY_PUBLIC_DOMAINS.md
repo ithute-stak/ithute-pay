@@ -4,6 +4,17 @@ Production-facing domains (planned; DNS/TLS/reverse proxy deployment is separate
 
 - Portal: `https://portal.pay.ithute.co.ls`
 - API origin: `https://api.pay.ithute.co.ls`
+- Intended server IPv4 address (provided by operator): `204.12.205.224`
+
+Expected DNS A records (verify independently before cutover):
+
+```text
+portal.pay.ithute.co.ls.  A  204.12.205.224
+api.pay.ithute.co.ls.     A  204.12.205.224
+```
+
+If both domains terminate on this host, route requests by hostname at the HTTPS
+reverse proxy. Do not configure the frontend to call the raw IP address.
 
 The frontend must call the API origin, not its own portal host. Preserve
 any backend version prefix (see `API_V1_PREFIX`); an origin is not an endpoint.
