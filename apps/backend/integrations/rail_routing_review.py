@@ -8,6 +8,7 @@ from __future__ import annotations
 from hashlib import sha256
 import json
 
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from database.models import AuditLog, User
@@ -42,6 +43,17 @@ def stage_rail_routing_approval(
         raise RoutingChangeRejected("Proposal identity mismatch")
     if reviewer.id == proposal.actor_id:
         raise RoutingChangeRejected("Proposal requires independent reviewer")
+
+    # Reject an existing committed or transaction-local review. Concurrent
+    # administrators still require a database uniqueness constraint at activation.
+    prior_review = db.scalar(
+        select(AuditLog.id).where(
+            AuditLog.action == "rail_routing_change_reviewed",
+            AuditLog.metadata_json["proposal_id"].as_string() == proposal.id,
+        )
+    )
+    if prior_review is not None:
+        raise RoutingChangeRejected("Routing proposal already reviewed")
 
     # No commit, provider flag, or merchant routing changes. Review events
     # remain separate from activation and must be committed by the caller.
