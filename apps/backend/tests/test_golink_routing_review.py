@@ -30,8 +30,10 @@ def reviewer(role="platform_admin", active=True, user_id="admin-reviewer"):
 def test_independent_approval_stages_only_audit_record():
     db = Mock()
     db.scalar.return_value = None
+    p = proposal()
+    db.execute.return_value.scalar_one_or_none.return_value = p.id
     item = stage_rail_routing_approval(
-        db, proposal=proposal(), reviewer=reviewer(),
+        db, proposal=p, reviewer=reviewer(),
         decision="approved", reason="Reviewed certification evidence")
     assert item.action == "rail_routing_change_reviewed"
     assert item.metadata_json["decision"] == "approved"
@@ -64,9 +66,21 @@ def test_tampered_proposal_refused():
 def test_already_reviewed_proposal_cannot_receive_second_decision():
     db = Mock()
     db.scalar.return_value = "existing-review-id"
+    p = proposal()
+    db.execute.return_value.scalar_one_or_none.return_value = p.id
     with pytest.raises(RoutingChangeRejected, match="already reviewed"):
         stage_rail_routing_approval(
-            db, proposal=proposal(), reviewer=reviewer(),
+            db, proposal=p, reviewer=reviewer(),
             decision="rejected", reason="Changed opinion after review")
     db.add.assert_not_called()
     db.commit.assert_not_called()
+
+
+def test_missing_or_unlocked_proposal_rejected_before_review():
+    db = Mock()
+    db.execute.return_value.scalar_one_or_none.return_value = None
+    with pytest.raises(RoutingChangeRejected, match="lock unavailable"):
+        stage_rail_routing_approval(
+            db, proposal=proposal(), reviewer=reviewer(),
+            decision="approved", reason="Independent certification review")
+    db.add.assert_not_called()
