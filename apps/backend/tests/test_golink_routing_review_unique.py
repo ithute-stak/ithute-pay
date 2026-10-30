@@ -26,12 +26,12 @@ def test_postgres_unique_review_index_blocks_concurrent_or_sequential_duplicates
             conn.execute(text("CREATE TEMP TABLE scratch_routing_review (action TEXT, metadata_json JSONB) ON COMMIT DROP"))
             conn.execute(text(index_sql))
             pid = "review-" + uuid.uuid4().hex
-            conn.execute(text("INSERT INTO scratch_routing_review VALUES (:action, jsonb_build_object('proposal_id', :pid))"),
+            conn.execute(text("INSERT INTO scratch_routing_review VALUES (:action, jsonb_build_object('proposal_id', CAST(:pid AS text)))"),
                          {"action": "rail_routing_change_reviewed", "pid": pid})
             with pytest.raises(IntegrityError):
                 with conn.begin_nested():
-                    conn.execute(text("INSERT INTO scratch_routing_review VALUES (:action, jsonb_build_object('proposal_id', :pid))"),
+                    conn.execute(text("INSERT INTO scratch_routing_review VALUES (:action, jsonb_build_object('proposal_id', CAST(:pid AS text)))"),
                                  {"action": "rail_routing_change_reviewed", "pid": pid})
             # Unrelated audit action remains unrestricted.
-            conn.execute(text("INSERT INTO scratch_routing_review VALUES ('other_action', jsonb_build_object('proposal_id', :pid))"),
+            conn.execute(text("INSERT INTO scratch_routing_review VALUES ('other_action', jsonb_build_object('proposal_id', CAST(:pid AS text)))"),
                          {"pid": pid})
