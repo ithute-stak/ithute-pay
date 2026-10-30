@@ -44,6 +44,18 @@ def stage_rail_routing_approval(
     if reviewer.id == proposal.actor_id:
         raise RoutingChangeRejected("Proposal requires independent reviewer")
 
+    # Serialize reviewers of the same proposal on PostgreSQL before checking
+    # for an existing decision. Caller must keep this transaction open through
+    # commit; a future database uniqueness constraint remains necessary.
+    locked = db.execute(
+        select(AuditLog.id).where(
+            AuditLog.id == proposal.id,
+            AuditLog.action == "rail_routing_change_proposed",
+        ).with_for_update()
+    ).scalar_one_or_none()
+    if locked != proposal.id:
+        raise RoutingChangeRejected("Persisted routing proposal lock unavailable")
+
     # Reject an existing committed or transaction-local review. Concurrent
     # administrators still require a database uniqueness constraint at activation.
     prior_review = db.scalar(
