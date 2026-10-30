@@ -93,4 +93,4 @@ jobs:
           subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
           PY
       - name: Concurrent webhook reconciliation on PostgreSQL
-        run: python -m pytest -q tests/test_golink_terminal_replays.py -k postgres_two_workers
+        run: python -m pytest -q tests/test_golink_terminal_replays.py tests/test_golink_routing_review_concurrency.py -k 'postgres_two_workers or postgres_two_administrators'
