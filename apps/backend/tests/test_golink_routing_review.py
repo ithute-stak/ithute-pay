@@ -19,7 +19,9 @@ def proposal():
         current=config, rail="MPESA",
         after=RailRoutingPolicy(True, True), actor_id="admin-original",
         reason="Provider certification approved", certified_direct_evidence=True)
-    return stage_rail_routing_proposal(Mock(), change=change)
+    saved = stage_rail_routing_proposal(Mock(), change=change)
+    saved.id = "proposal-123"
+    return saved
 
 
 def reviewer(role="platform_admin", active=True, user_id="admin-reviewer"):
