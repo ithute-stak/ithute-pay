@@ -1,0 +1,55 @@
+name: Build IthutePay VPS image
+
+on:
+  push:
+    branches:
+      - feature/golink-optional-adapter
+    paths:
+      - 'Dockerfile'
+      - 'apps/backend/**'
+      - 'apps/frontend/**'
+      - 'deploy/container/**'
+      - 'deploy/nginx/**'
+      - 'deploy/compose.public-edge.yml'
+      - '.github/workflows/build-vps-image.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: ithutepay-vps-image-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source
+        uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Authenticate to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build and publish immutable development image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          push: true
+          tags: ghcr.io/ithute-stak/ithute-pay:${{ github.sha }}
+          build-args: |
+            BACKEND_INTERNAL_URL=http://127.0.0.1:8001
+            NEXT_PUBLIC_API_BASE=/api/v1
+            NEXT_PUBLIC_PARTNER_API_BASE=https://api.pay.ithute.co.ls/api/v1
+          provenance: true
+          sbom: true
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      - name: Published image reference
+        run: echo "ghcr.io/ithute-stak/ithute-pay:${GITHUB_SHA}"
