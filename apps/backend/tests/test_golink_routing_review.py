@@ -29,6 +29,7 @@ def reviewer(role="platform_admin", active=True, user_id="admin-reviewer"):
 
 def test_independent_approval_stages_only_audit_record():
     db = Mock()
+    db.scalar.return_value = None
     item = stage_rail_routing_approval(
         db, proposal=proposal(), reviewer=reviewer(),
         decision="approved", reason="Reviewed certification evidence")
@@ -58,3 +59,14 @@ def test_tampered_proposal_refused():
     with pytest.raises(RoutingChangeRejected, match="integrity"):
         stage_rail_routing_approval(Mock(), proposal=p, reviewer=reviewer(),
             decision="approved", reason="Reviewed certification evidence")
+
+
+def test_already_reviewed_proposal_cannot_receive_second_decision():
+    db = Mock()
+    db.scalar.return_value = "existing-review-id"
+    with pytest.raises(RoutingChangeRejected, match="already reviewed"):
+        stage_rail_routing_approval(
+            db, proposal=proposal(), reviewer=reviewer(),
+            decision="rejected", reason="Changed opinion after review")
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
