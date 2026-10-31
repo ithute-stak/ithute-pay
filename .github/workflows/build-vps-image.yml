@@ -37,13 +37,22 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish immutable commit-tagged image
+      - name: Generate image tags
+        id: image-tags
+        uses: docker/metadata-action@v5
+        with:
+          images: ghcr.io/ithute-stak/ithute-pay
+          tags: |
+            type=sha,format=long
+            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+      - name: Build and publish commit and main-latest images
         uses: docker/build-push-action@v6
         with:
           context: .
           file: ./Dockerfile
           push: true
-          tags: ghcr.io/ithute-stak/ithute-pay:${{ github.sha }}
+          tags: ${{ steps.image-tags.outputs.tags }}
+          labels: ${{ steps.image-tags.outputs.labels }}
           build-args: |
             BACKEND_INTERNAL_URL=http://127.0.0.1:8001
             NEXT_PUBLIC_API_BASE=/api/v1
@@ -53,4 +62,7 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Published image reference
-        run: echo "ghcr.io/ithute-stak/ithute-pay:${GITHUB_SHA}"
+        run: |
+          echo "Published tags:"
+          echo "${{ steps.image-tags.outputs.tags }}"
+          echo "On main, pull ghcr.io/ithute-stak/ithute-pay:latest"
