@@ -14,6 +14,7 @@ import {
   Globe2,
   KeyRound,
   Landmark,
+  Network,
   Link2,
   RadioTower,
   Settings2,
@@ -71,6 +72,13 @@ const MPESA_PRODUCTS = [
 ] as const;
 
 const PROVIDER_CATALOGUE: ProviderCatalogueItem[] = [
+  {
+    id: "golink",
+    name: "Golink",
+    category: "Optional payment aggregator",
+    country: "Multi-rail",
+    description: "Optional backend adapter for collections and reconciliation. Direct M-Pesa remains independent. Sandbox verification and production approval are pending.",
+  },
   {
     id: "mpesa",
     provider: "mpesa",
@@ -265,6 +273,7 @@ function defaultsFor(provider: ProviderKey, environment: string) {
 }
 
 function providerIcon(item: ProviderCatalogueItem) {
+  if (item.id === "golink") return <Network className="h-5 w-5" />;
   if (item.cardRail) return <CreditCard className="h-5 w-5" />;
   if (item.id === "mpesa" || item.id === "ecocash") return <Smartphone className="h-5 w-5" />;
   if (item.id === "paypal") return <Globe2 className="h-5 w-5" />;
@@ -324,6 +333,7 @@ export default function Page() {
   }
 
   function environmentState(item: ProviderCatalogueItem, environment: "sandbox" | "production") {
+    if (item.id === "golink") return environment === "sandbox" ? "Certification pending" : "Not authorized";
     if (item.roadmap) return "Adapter not implemented";
     const row = rowsFor(item).find((candidate: any) => candidate.environment === environment);
     if (!row) return "Not configured";
@@ -333,6 +343,7 @@ export default function Page() {
   }
 
   function overallState(item: ProviderCatalogueItem) {
+    if (item.id === "golink") return { label: "Backend integrated · inactive", className: "bg-amber-50 text-amber-700" };
     if (item.roadmap) return { label: "Not integrated", className: "bg-slate-100 text-slate-600" };
     const rows = rowsFor(item);
     const active = rows.find((row: any) => row.active);
@@ -561,18 +572,24 @@ export default function Page() {
                     <div className="mt-auto flex items-center justify-between gap-3 border-t border-slate-100 pt-4">
                       <p className="text-[11px] font-semibold uppercase tracking-wide text-slate-400">{item.country}</p>
                       <div className="flex gap-2">
-                        {!item.roadmap && (
-                          <Button type="button" size="sm" variant="ghost" onClick={() => setActiveTab("environments")}>Environments</Button>
+                        {item.id === "golink" ? (
+                          <Button asChild type="button" size="sm" variant="secondary"><Link href="/dashboard/golink">View Golink</Link></Button>
+                        ) : (
+                          <>
+                            {!item.roadmap && (
+                              <Button type="button" size="sm" variant="ghost" onClick={() => setActiveTab("environments")}>Environments</Button>
+                            )}
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="secondary"
+                              disabled={!!item.roadmap || !item.provider}
+                              onClick={() => configureItem(item)}
+                            >
+                              {item.roadmap ? "Roadmap" : "Configure"}
+                            </Button>
+                          </>
                         )}
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant="secondary"
-                          disabled={!!item.roadmap || !item.provider}
-                          onClick={() => configureItem(item)}
-                        >
-                          {item.roadmap ? "Roadmap" : "Configure"}
-                        </Button>
                       </div>
                     </div>
                   </CardContent>
