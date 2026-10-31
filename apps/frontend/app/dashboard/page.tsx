@@ -87,6 +87,11 @@ export default function DashboardPage() {
         })}
       </div>
 
+      <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4 sm:flex-row sm:items-center sm:justify-between">
+        <div><p className="font-black text-[#082b4d]">Golink — optional integration</p><p className="mt-1 text-sm text-amber-900">Review the Golink adapter and certification requirements. Live Golink payments are not enabled.</p></div>
+        <Button variant="secondary" onClick={() => router.push("/dashboard/golink")}>View Golink integration<ArrowRight className="h-4 w-4" /></Button>
+      </div>
+
       <div className="mt-6 flex flex-col gap-3 rounded-2xl border border-slate-200 bg-slate-50 p-4 sm:flex-row sm:items-center sm:justify-between">
         <div className="flex items-start gap-3"><Cable className="mt-0.5 h-5 w-5 text-primary" /><div><p className="font-black text-[#082b4d]">Need to add or change a provider?</p><p className="mt-1 text-sm text-muted-foreground">Provider setup is kept separate from day-to-day transaction work so credentials and operational screens do not become cluttered.</p></div></div>
         <Button variant="secondary" onClick={() => router.push("/dashboard/providers")}>Open provider setup</Button>
