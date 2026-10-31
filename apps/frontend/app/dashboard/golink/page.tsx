@@ -52,7 +52,7 @@ export default function GolinkPage() {
   }
 
   return (
-    <div className="mx-auto max-w-5xl">
+    <div className="w-full min-w-0">
       <PageHeader title="Golink integration" description="Configure the optional Golink adapter without replacing direct M-PESA or enabling live transactions." />
       <div className="mb-6 rounded-2xl border border-amber-200 bg-amber-50 p-5 text-amber-950">
         <p className="flex items-center gap-2 font-bold"><CircleAlert className="h-5 w-5" />Sandbox preparation only</p>
