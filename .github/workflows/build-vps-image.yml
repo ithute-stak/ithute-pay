@@ -3,6 +3,7 @@ name: Build IthutePay VPS image
 on:
   push:
     branches:
+      - main
       - feature/golink-optional-adapter
     paths:
       - 'Dockerfile'
@@ -36,7 +37,7 @@ jobs:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
-      - name: Build and publish immutable development image
+      - name: Build and publish immutable commit-tagged image
         uses: docker/build-push-action@v6
         with:
           context: .
