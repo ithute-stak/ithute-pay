@@ -655,7 +655,7 @@ export default function Page() {
       )}
 
       {activeTab === "configure" && (
-        <section role="tabpanel" data-testid="provider-configure-tab" className="mx-auto max-w-6xl">
+        <section role="tabpanel" data-testid="provider-configure-tab" className="w-full min-w-0">
           <div id="provider-config-form" className="overflow-hidden rounded-[28px] border border-slate-200 bg-white shadow-sm">
             <div className="relative overflow-hidden bg-gradient-to-r from-[#082b4d] via-[#0d5d97] to-[#1285c6] px-5 py-6 text-white sm:px-7">
               <div className="absolute -right-16 -top-20 h-56 w-56 rounded-full bg-white/10 blur-2xl" />
