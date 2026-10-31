@@ -29,7 +29,7 @@ export default function DashboardPage() {
   };
 
   return (
-    <div className="mx-auto max-w-6xl">
+    <div className="w-full min-w-0">
       <PageHeader
         title="Choose a payment provider"
         description="Start by selecting the rail you want to operate. Pay Bridge will then show only the services, tests and guidance relevant to that provider, while platform administration stays available separately."
