@@ -42,7 +42,7 @@ async def _recover(ids:list[str])->int:
 def recover_processing_transactions()->int:
     threshold=utcnow()-timedelta(seconds=30)
     with SessionLocal() as db:
-        ids=[r.id for r in db.scalars(select(ProviderTransaction).where(ProviderTransaction.status.in_(["processing","unknown"]),ProviderTransaction.created_at<=threshold).order_by(ProviderTransaction.created_at.asc()).limit(100)).all()]
+        ids=[r.id for r in db.scalars(select(ProviderTransaction).where(ProviderTransaction.status.in_(["processing","unknown"]),ProviderTransaction.provider != "golink",ProviderTransaction.created_at<=threshold).order_by(ProviderTransaction.created_at.asc()).limit(100)).all()]
     return asyncio.run(_recover(ids)) if ids else 0
 
 
@@ -100,3 +100,10 @@ def recover_direct_funding_payouts()->int:
     with SessionLocal() as db:
         ids=[r.id for r in db.scalars(select(ProviderOperation).where(ProviderOperation.operation_type=="payout.direct_funding",ProviderOperation.status.in_(["processing","unknown","succeeded"])).order_by(ProviderOperation.created_at.asc()).limit(100)).all()]
     return asyncio.run(_recover_direct_funding(ids)) if ids else 0
+
+
+@celery_app.task(name="workers.tasks.reconcile_golink_callbacks")
+def reconcile_golink_callbacks() -> dict[str, int]:
+    """Isolated Golink inbox reconciliation (off until explicitly certified)."""
+    from workers.golink_reconciliation import run_golink_reconciliation
+    return run_golink_reconciliation()

@@ -114,6 +114,8 @@ def active_gateway_provider_configuration(db: Session, provider: str = "mpesa") 
 def validate_configuration_for_activation(row: GatewayProviderConfiguration) -> None:
     if not row.enabled:
         raise HTTPException(status_code=409, detail="Provider configuration is disabled")
+    if row.provider == "golink":
+        raise HTTPException(status_code=409, detail="Golink activation is disabled until webhook, routing and reconciliation certification")
     if row.mode != "live":
         return
     missing: list[str] = []
@@ -227,8 +229,8 @@ def serialize_gateway_provider_configuration(row: GatewayProviderConfiguration) 
 
 def upsert_gateway_provider_configuration(db: Session, payload: dict) -> GatewayProviderConfiguration:
     provider = str(payload.get("provider") or "mpesa").lower().strip()
-    if provider not in {"mpesa", "ecocash", "fnb", "paypal"}:
-        raise HTTPException(status_code=400, detail="provider must be mpesa, ecocash, fnb or paypal")
+    if provider not in {"mpesa", "ecocash", "fnb", "paypal", "golink"}:
+        raise HTTPException(status_code=400, detail="provider must be mpesa, ecocash, fnb, paypal or golink")
     environment = str(payload.get("environment") or "sandbox").lower().strip()
     if environment not in {"sandbox", "production"}:
         raise HTTPException(status_code=400, detail="environment must be sandbox or production")
@@ -251,7 +253,7 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
     )
 
     row.mode = mode
-    row.enabled = bool(payload.get("enabled", True))
+    row.enabled = False if provider == "golink" else bool(payload.get("enabled", True))
     provider_defaults = {
         "mpesa": {
             "base_url": MPESA_KNOWN_GOOD_SANDBOX_PROFILE["base_url"],
@@ -261,12 +263,13 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
         },
         "ecocash": {"base_url": "https://developers.ecocash.co.zw/sandbox/payment/v1" if environment == "sandbox" else "https://developers.ecocash.co.zw/payment/v1", "market": "ecocashZW", "country": "ZWE", "currency": "USD"},
         "fnb": {"base_url": "", "market": "fnbLES", "country": "LES", "currency": "LSL"},
+        "golink": {"base_url": "https://sandbox.transact.golink.co.ls/api" if environment == "sandbox" else "https://transact.golink.co.ls/api", "market": "golinkLES", "country": "LES", "currency": "LSL"},
         "paypal": {
             "base_url": "https://api-m.sandbox.paypal.com" if environment == "sandbox" else "https://api-m.paypal.com",
             "market": "paypal", "country": "LES", "currency": "USD",
         },
     }[provider]
-    row.base_url = str(payload.get("base_url") or row.base_url or provider_defaults["base_url"]).rstrip("/")
+    row.base_url = (provider_defaults["base_url"] if provider == "golink" else str(payload.get("base_url") or row.base_url or provider_defaults["base_url"]).rstrip("/"))
     row.market = str(payload.get("market") or row.market or provider_defaults["market"])
     row.country = str(payload.get("country") or row.country or provider_defaults["country"]).upper()
     row.currency = str(payload.get("currency") or row.currency or provider_defaults["currency"]).upper()
@@ -292,7 +295,8 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
 
     defaults = default_provider_urls()
     paypal_callback = _join(settings.PUBLIC_API_URL, f"{settings.API_V1_PREFIX}/provider-callbacks/paypal")
-    row.callback_url = str(payload.get("callback_url") or row.callback_url or (paypal_callback if provider == "paypal" else defaults["callback_url"]))
+    golink_callback = _join(settings.PUBLIC_API_URL, f"{settings.API_V1_PREFIX}/provider-callbacks/golink")
+    row.callback_url = str(payload.get("callback_url") or row.callback_url or (golink_callback if provider == "golink" else paypal_callback if provider == "paypal" else defaults["callback_url"]))
     row.result_url = str(payload.get("result_url") or row.result_url or defaults["result_url"])
     row.timeout_url = str(payload.get("timeout_url") or row.timeout_url or defaults["timeout_url"])
     row.redirect_url = str(payload.get("redirect_url") or row.redirect_url or defaults["redirect_url"])

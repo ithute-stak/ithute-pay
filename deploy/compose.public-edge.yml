@@ -1,0 +1,16 @@
+# Apply with: docker compose -f compose.yaml -f deploy/compose.public-edge.yml ...
+# Bind the existing Docker nginx HTTP endpoint only to the host loopback.
+# TLS termination happens in host Nginx via the supplied example file.
+services:
+  nginx:
+    ports: !override
+      - "127.0.0.1:8081:80"
+  ithute-pay-bridge:
+    environment:
+      PUBLIC_APP_URL: https://portal.pay.ithute.co.ls
+      PUBLIC_API_URL: https://api.pay.ithute.co.ls
+      PORTAL_APP_URL: https://portal.pay.ithute.co.ls/portal
+      CORS_ORIGINS: https://portal.pay.ithute.co.ls
+      TRUSTED_HOSTS: api.pay.ithute.co.ls,portal.pay.ithute.co.ls,localhost,127.0.0.1
+      GOLINK_COLLECTIONS_ENABLED: "false"
+      GOLINK_RECONCILIATION_ENABLED: "false"

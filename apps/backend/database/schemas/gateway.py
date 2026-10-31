@@ -19,7 +19,7 @@ class RoutedCollectionCreate(BaseModel):
 
 
 class GatewayProviderConfigUpsert(BaseModel):
-    provider: Literal["mpesa", "ecocash", "fnb", "paypal"] = "mpesa"
+    provider: Literal["mpesa", "ecocash", "fnb", "paypal", "golink"] = "mpesa"
     environment: Literal["sandbox", "production"] = "sandbox"
     mode: Literal["simulator", "live"] = "simulator"
     enabled: bool = True

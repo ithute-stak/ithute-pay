@@ -9,6 +9,7 @@ celery_app.conf.update(
     task_serializer="json", result_serializer="json", accept_content=["json"],
     timezone="UTC", enable_utc=True,
     beat_schedule={
+        "reconcile-golink-every-five-minutes":{"task":"workers.tasks.reconcile_golink_callbacks","schedule":300.0},
         "retry-webhooks-every-minute":{"task":"workers.tasks.retry_due_webhooks","schedule":60.0},
         "recover-processing-transactions":{"task":"workers.tasks.recover_processing_transactions","schedule":60.0},
         "process-settlement-instructions":{"task":"workers.tasks.process_settlement_instructions","schedule":30.0},
