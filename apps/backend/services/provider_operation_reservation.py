@@ -50,6 +50,10 @@ def reserve_provider_operation(
         record = db.get(ProviderOperation, existing.resource_id)
         if record is None or record.application_id != application_id or record.merchant_id != merchant_id:
             raise HTTPException(status_code=409, detail="Idempotency reservation cannot be reconciled")
+        # A compare-and-swap dispatch claim may update this row with
+        # synchronize_session=False. Reload committed state before returning a
+        # replay to avoid reporting stale "created" after dispatch.
+        db.refresh(record)
         return record, False
 
     record = ProviderOperation(
