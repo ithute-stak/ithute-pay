@@ -12,9 +12,10 @@ from typing import Any, Literal
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
+from sqlalchemy import select
 
 from core.access_control import platform_admin
-from database.models import User
+from database.models import User, AuditLog
 from database.session import get_db
 from providers.mpesa.factory import build_gateway_provider
 from services.audit import write_audit
@@ -106,6 +107,48 @@ class MpesaLiveTestRequest(BaseModel):
     expiry_date: str | None = Field(default=None, max_length=20)
     agreed_terms: bool = True
     confirm_live_funds: bool = False
+
+
+@router.get("/history")
+def live_verification_history(
+    db: Session = Depends(get_db),
+    user: User = Depends(platform_admin),
+    limit: int = 100,
+):
+    """Read-only verification evidence. This is NOT a financial collections ledger."""
+    rows = db.scalars(
+        select(AuditLog)
+        .where(AuditLog.action.in_((
+            "mpesa_live_verification.started",
+            "mpesa_live_verification.executed",
+            "mpesa_live_verification.outcome_unknown",
+        )))
+        .order_by(AuditLog.created_at.desc())
+        .limit(max(1, min(limit, 500)))
+    ).all()
+    # Executed and outcome-unknown entries supersede started for the same run.
+    by_run: dict[str, dict[str, Any]] = {}
+    for row in rows:
+        if not row.resource_id or row.resource_id in by_run:
+            continue
+        metadata = dict(row.metadata_json or {})
+        by_run[row.resource_id] = {
+            "run_id": row.resource_id,
+            "created_at": row.created_at.isoformat(),
+            "event": row.action.rsplit(".", 1)[-1],
+            "operation": metadata.get("operation"),
+            "status": metadata.get("status"),
+            "accepted": metadata.get("accepted"),
+            "response_code": metadata.get("response_code"),
+            "amount": metadata.get("amount"),
+            "currency": metadata.get("currency"),
+            "transaction_reference": metadata.get("transaction_reference"),
+            "third_party_conversation_id": metadata.get("third_party_conversation_id"),
+            "provider_transaction_id": metadata.get("provider_transaction_id"),
+            "evidence_type": "live_verification",
+            "financially_posted": False,
+        }
+    return list(by_run.values())
 
 
 def _configured_live_provider(db: Session):
@@ -590,6 +633,11 @@ async def run_live_test(
             "status": result.status,
             "response_code": result.response_code,
             "accepted": result.accepted,
+            "amount": str(payload.amount) if operation in {"c2b", "b2c", "b2b", "direct_debit_payment"} else None,
+            "currency": currency,
+            "transaction_reference": reference,
+            "third_party_conversation_id": third_party_conversation_id,
+            "provider_transaction_id": result.transaction_id,
         },
     )
     db.commit()
