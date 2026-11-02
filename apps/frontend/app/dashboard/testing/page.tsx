@@ -493,7 +493,7 @@ export default function MpesaTestingPage() {
           >
             <div className="flex items-center justify-between gap-3">
               <p className="font-black">Live production verification</p>
-              <Badge className={liveReady ? "border-green-200 bg-green-50 text-green-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{liveReady ? "Live ready" : "Activate live provider"}</Badge>
+              <Badge className={liveReady ? "border-green-200 bg-green-50 text-green-700" : "border-slate-200 bg-slate-50 text-slate-600"}>{liveReady ? "Live configuration active — unverified" : "No active live provider"}</Badge>
             </div>
             <p className="mt-1 text-sm text-slate-500">Real provider operations using real references and customers. Money-changing tests require confirmation.</p>
           </button>
