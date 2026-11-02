@@ -1,0 +1,45 @@
+name: Public route smoke test validation
+
+on:
+  pull_request:
+    paths:
+      - 'deploy/vps/check-public-routes.sh'
+      - '.github/workflows/public-routes-smoke-test.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/vps/check-public-routes.sh'
+      - '.github/workflows/public-routes-smoke-test.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  smoke-script:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check Bash syntax
+        run: bash -n deploy/vps/check-public-routes.sh
+      - name: Verify success and outage detection using mocked HTTP responses
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/mock-bin"
+          cat > "$RUNNER_TEMP/mock-bin/curl" <<'EOF'
+          #!/usr/bin/env bash
+          if [[ "$*" == *"portal.pay.ithute.co.ls"* ]]; then
+            printf '%s' "${TEST_PORTAL_STATUS:-307}"
+          else
+            printf '%s' "${TEST_API_STATUS:-200}"
+          fi
+          EOF
+          chmod +x "$RUNNER_TEMP/mock-bin/curl"
+          export PATH="$RUNNER_TEMP/mock-bin:$PATH"
+          TEST_PORTAL_STATUS=307 TEST_API_STATUS=200 bash deploy/vps/check-public-routes.sh
+          if TEST_PORTAL_STATUS=502 TEST_API_STATUS=200 bash deploy/vps/check-public-routes.sh; then
+            echo "Expected portal outage to fail"; exit 1
+          fi
+          if TEST_PORTAL_STATUS=307 TEST_API_STATUS=502 bash deploy/vps/check-public-routes.sh; then
+            echo "Expected API outage to fail"; exit 1
+          fi
