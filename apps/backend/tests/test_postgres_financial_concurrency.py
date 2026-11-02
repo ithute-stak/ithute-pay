@@ -22,7 +22,7 @@ from database.models import (
     Merchant, ProviderOperation,
 )
 from database.session import SessionLocal, engine
-from services.ledger import post_journal
+from services.ledger import ensure_account, post_journal
 from services.provider_operation_reservation import (
     claim_provider_dispatch, payment_request_fingerprint,
     reserve_provider_operation,
@@ -79,6 +79,13 @@ def test_parallel_provider_dispatch_one_claim():
 
 def test_parallel_journal_posting_unique_source_constraint():
     merchant_id, app_id = _company()
+    # Pre-create ledger accounts to isolate the race on journal uniqueness.
+    # Otherwise a collision in ensure_account() could make this test pass
+    # without proving duplicate posting protection.
+    with SessionLocal() as db:
+        ensure_account(db, merchant_id, "provider_clearing", "LSL")
+        ensure_account(db, merchant_id, "merchant_payable", "LSL")
+        db.commit()
     barrier = Barrier(2)
     def post():
         with SessionLocal() as db:
