@@ -86,7 +86,7 @@ jobs:
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
-          python -m pytest -vv -ra --tb=short --junitxml=financial-integrity-results.xml \
+          python -m pytest -vv -ra --tb=short --durations=10 --junitxml=financial-integrity-results.xml \
             tests/test_postgres_financial_concurrency.py \
             tests/test_financial_integrity_posting.py \
             tests/test_payment_lifecycle.py \
@@ -97,6 +97,13 @@ jobs:
             tests/test_provider_operation_terminal_state.py \
             tests/test_callback_concurrency_contract.py \
             tests/test_payment_fault_injection.py
+      - name: Record CI diagnostic context
+        if: always()
+        run: |
+          python --version
+          python -m pip show pytest SQLAlchemy psycopg
+          echo "GitHub ref: ${{ github.ref }}"
+          echo "Commit: ${{ github.sha }}"
       - name: Upload payment test results
         if: always()
         uses: actions/upload-artifact@v4
