@@ -91,7 +91,7 @@ def test_parallel_journal_posting_unique_source_constraint():
         with SessionLocal() as db:
             barrier.wait(timeout=10)
             try:
-                post_journal(
+                entry = post_journal(
                     db, merchant_id=merchant_id, application_id=app_id,
                     source_type="provider_transaction", source_id="race-journal",
                     reference="provider:race-journal", description="Concurrency test",
@@ -101,15 +101,21 @@ def test_parallel_journal_posting_unique_source_constraint():
                     ],
                 )
                 db.commit()
-                return "posted"
+                return "posted", entry.id
             except IntegrityError:
                 db.rollback()
-                return "duplicate_rejected"
+                return "duplicate_rejected", None
 
     with ThreadPoolExecutor(max_workers=2) as pool:
         futures = [pool.submit(post) for _ in range(2)]
         results = [f.result(timeout=15) for f in futures]
-    assert sorted(results) == ["duplicate_rejected", "posted"]
+    outcomes = [outcome for outcome, _ in results]
+    # A competing request may either hit the unique index or read the
+    # already-committed journal and return it idempotently.
+    assert outcomes.count("posted") in (1, 2)
+    assert set(outcomes).issubset({"posted", "duplicate_rejected"})
+    posted_ids = {entry_id for outcome, entry_id in results if outcome == "posted"}
+    assert len(posted_ids) == 1
 
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(JournalEntry)) == 1
