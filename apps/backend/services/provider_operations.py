@@ -22,6 +22,11 @@ def create_operation(db: Session, *, merchant_id: str, application_id: str, prov
 
 
 def apply_operation_result(db: Session, operation: ProviderOperation, result: ProviderResult) -> ProviderOperation:
+    # Delayed callbacks must never downgrade a terminal provider outcome.
+    if operation.status == "succeeded" and result.status != "succeeded":
+        return operation
+    if operation.status == "failed" and result.status in {"processing", "unknown"}:
+        return operation
     operation.status = result.status
     operation.conversation_id = result.conversation_id or operation.conversation_id
     operation.provider_transaction_id = result.transaction_id or operation.provider_transaction_id
