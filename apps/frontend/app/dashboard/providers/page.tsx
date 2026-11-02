@@ -308,6 +308,8 @@ export default function Page() {
   const { data: callbacks = [] } = useProviderCallbackLogsQuery();
   const [save, { isLoading }] = useCreateProviderConfigMutation();
   const [activate, { isLoading: activating }] = useActivateProviderConfigMutation();
+  const [activationMessage, setActivationMessage] = useState<string | null>(null);
+  const [activationError, setActivationError] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<ProviderTab>("catalogue");
   const [configureStep, setConfigureStep] = useState<ConfigureStep>(1);
   const [form, setForm] = useState<any>(empty);
@@ -613,6 +615,8 @@ export default function Page() {
               </div>
             </CardHeader>
             <CardContent className="pt-5">
+              {activationError && <div role="alert" className="mb-3 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{activationError}</div>}
+              {activationMessage && <div role="status" className="mb-3 rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">{activationMessage}</div>}
               <DataTable
                 rows={providers}
                 empty="No provider environment is configured yet. Open Add / update to create one."
@@ -637,7 +641,17 @@ export default function Page() {
                             Active
                           </span>
                         ) : (
-                          <Button size="sm" variant="secondary" disabled={activating || !r.enabled} onClick={() => activate(r.id)}>
+                          <Button size="sm" variant="secondary" disabled={activating || !r.enabled} onClick={async () => {
+                            setActivationMessage(null);
+                            setActivationError(null);
+                            try {
+                              await activate(r.id).unwrap();
+                              setActivationMessage("Provider configuration activated successfully.");
+                            } catch (err: any) {
+                              const detail = err?.data?.detail;
+                              setActivationError(typeof detail === "string" ? detail : "Unable to activate provider. Check login, configuration, and server logs.");
+                            }
+                          }}>
                             Activate
                           </Button>
                         )}
