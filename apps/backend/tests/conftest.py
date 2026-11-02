@@ -3,6 +3,16 @@ from pathlib import Path
 
 TEST_DB = Path(__file__).parent / "paybridge_test.db"
 os.environ["ENVIRONMENT"] = "test"
+# Financial concurrency tests must never silently fall back to SQLite.
+# The CI workflow explicitly supplies both flags for its disposable PG service.
+if (
+    os.environ.get("PG_FINANCIAL_CONCURRENCY_TEST") == "true"
+    and os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true"
+):
+    raise RuntimeError(
+        "Financial concurrency tests require GOLINK_PG_CONCURRENCY_TEST=true "
+        "and a disposable local PostgreSQL test database"
+    )
 if os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true":
     os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DB}"
 else:
