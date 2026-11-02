@@ -1,0 +1,11 @@
+# Example for the existing Caddy /data/product-routes/ithutepay.caddy.
+# Integrate into your current file, preserving its headers/TLS/security directives.
+# Both Caddy and ithute-pay-bridge must share the public-edge Docker network.
+# Never substitute a container IP: it can change when Docker recreates services.
+portal.pay.ithute.co.ls {
+    reverse_proxy ithute-pay-ithute-pay-bridge-1:3001
+}
+
+api.pay.ithute.co.ls {
+    reverse_proxy ithute-pay-ithute-pay-bridge-1:8001
+}
