@@ -207,6 +207,26 @@ async def run_live_test(
     config, provider = _configured_live_provider(db)
     operation = payload.operation
     reference, generated_third_party_reference, third_party_conversation_id = _ids(operation)
+    # Persist correlation evidence before any external call. A timeout may mean
+    # that Vodacom executed the payment even if we never received its reply.
+    # Reconcile the original reference; do not blindly repeat the operation.
+    run_id = public_id("mpesalive")
+    if operation in MONEY_CHANGING_OPERATIONS:
+        write_audit(
+            db,
+            actor_type="user",
+            actor_id=user.id,
+            action="mpesa_live_verification.started",
+            resource_type="mpesa_live_verification",
+            resource_id=run_id,
+            metadata={
+                "operation": operation,
+                "status": "pending_provider_response",
+                "transaction_reference": reference,
+                "third_party_conversation_id": third_party_conversation_id,
+            },
+        )
+        db.commit()
     third_party_reference = str(payload.third_party_reference or generated_third_party_reference).strip()
     currency = payload.currency.strip().upper()
     endpoint = _endpoint(config, operation)
@@ -513,7 +533,6 @@ async def run_live_test(
         raise HTTPException(status_code=422, detail=f"Unsupported live M-Pesa operation: {operation}")
 
     duration_ms = round((time.perf_counter() - started) * 1000, 2)
-    run_id = public_id("mpesalive")
     response = {
         "run_id": run_id,
         "product": operation,
