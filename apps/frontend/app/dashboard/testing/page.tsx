@@ -337,6 +337,10 @@ export default function MpesaTestingPage() {
 
   async function runLiveVerification() {
     setError("");
+    if (["c2b", "b2c", "authorization"].includes(liveOperation) && !/^[0-9]{11,14}$/.test(livePhone.trim())) {
+      setError("Enter a valid international customer MSISDN: 11–14 digits, including country code. For Lesotho use 266 plus the 8-digit number; no +, spaces or hyphens.");
+      return;
+    }
     setLiveResult(null);
     setLiveBusy(true);
     try {
