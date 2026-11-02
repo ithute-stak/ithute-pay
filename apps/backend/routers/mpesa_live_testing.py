@@ -124,10 +124,13 @@ def _configured_live_provider(db: Session):
 
 
 def _ids(operation: str) -> tuple[str, str, str]:
+    # OpenAPI input_TransactionReference accepts only [A-Za-z0-9_+ ] and
+    # at most 20 characters. Use a 76-bit random alphanumeric reference.
+    # Never truncate a longer identifier: truncation can discard uniqueness.
+    reference = f"L{secrets.token_hex(9).upper()}"
     seed = f"{int(time.time())}{secrets.token_hex(3)}".upper()
-    reference = f"LIVE-{operation[:5].upper()}-{seed}"[:30]
-    third_party_reference = f"LIVE-{operation[:8].upper()}-{seed}"[:40]
-    third_party_conversation_id = f"LIVE{secrets.token_hex(16).upper()}"[:40]
+    third_party_reference = f"LIVE{operation[:8].upper()}{seed}"[:40]
+    third_party_conversation_id = f"LIVE{secrets.token_hex(16).upper()}"
     return reference, third_party_reference, third_party_conversation_id
 
 
