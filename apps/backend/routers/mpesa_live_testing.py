@@ -4,6 +4,7 @@ import secrets
 import time
 from datetime import date
 from decimal import Decimal
+import re
 from typing import Any, Literal
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -164,6 +165,16 @@ def _require(value: str | None, field: str, operation: str) -> str:
     return text
 
 
+def _require_live_phone(value: str | None, operation: str) -> str:
+    phone = _require(value, "customer_msisdn", operation)
+    if re.fullmatch(r"[0-9]{11,14}", phone) is None:
+        raise HTTPException(
+            status_code=422,
+            detail="Customer MSISDN must contain 11-14 digits, including country code (for Lesotho: 266 followed by the 8-digit number). No plus sign, spaces or hyphens.",
+        )
+    return phone
+
+
 def _require_locator(payload: MpesaLiveTestRequest, operation: str) -> None:
     if not any(
         str(value or "").strip()
@@ -210,7 +221,7 @@ async def run_live_test(
     trigger_value: str | None = None
 
     if operation == "c2b":
-        phone = _require(payload.customer_msisdn, "customer_msisdn", "C2B")
+        phone = _require_live_phone(payload.customer_msisdn, "C2B")
         result = await provider.collect(
             amount=payload.amount,
             currency=currency,
@@ -230,7 +241,7 @@ async def run_live_test(
             "provider_endpoint": endpoint,
         }
     elif operation == "b2c":
-        phone = _require(payload.customer_msisdn, "customer_msisdn", "B2C")
+        phone = _require_live_phone(payload.customer_msisdn, "B2C")
         result = await provider.payout(
             amount=payload.amount,
             currency=currency,
@@ -272,7 +283,7 @@ async def run_live_test(
             "provider_endpoint": endpoint,
         }
     elif operation == "authorization":
-        phone = _require(payload.customer_msisdn, "customer_msisdn", "two-stage authorization")
+        phone = _require_live_phone(payload.customer_msisdn, "two-stage authorization")
         result = await provider.authorize_collection(
             amount=payload.amount,
             currency=currency,
