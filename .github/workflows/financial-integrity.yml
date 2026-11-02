@@ -63,6 +63,20 @@ jobs:
           assert os.environ["PG_FINANCIAL_CONCURRENCY_TEST"] == "true"
           print("Disposable CI PostgreSQL database verified")
           PY
+      - name: Refuse a skipped PostgreSQL concurrency suite
+        working-directory: apps/backend
+        run: |
+          python - <<'PY'
+          import os
+          from database.session import engine
+          if engine.dialect.name != "postgresql":
+              raise SystemExit("Financial integrity CI must use PostgreSQL")
+          if os.environ.get("PG_FINANCIAL_CONCURRENCY_TEST") != "true":
+              raise SystemExit("PostgreSQL financial concurrency tests must be enabled")
+          if os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true":
+              raise SystemExit("PostgreSQL test session must be enabled")
+          print("PostgreSQL financial concurrency suite enabled")
+          PY
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
