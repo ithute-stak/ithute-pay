@@ -178,7 +178,11 @@ def apply_provider_result(db: Session, *, transaction: ProviderTransaction, resu
 
 
 async def confirm_payment(db: Session, payment: PaymentIntent) -> PaymentIntent:
-    if payment.status in {"succeeded","processing"}: return payment
+    # Never resend an operation that has already been dispatched or whose
+    # outcome is uncertain. Only newly created/confirmation-needed intents
+    # are eligible for an initial provider request.
+    if payment.status not in {"created", "requires_confirmation"}:
+        return payment
     from services.operations import evaluate_payment_risk
     decision = evaluate_payment_risk(
         db, merchant_id=payment.merchant_id, application_id=payment.application_id,
@@ -194,12 +198,34 @@ async def confirm_payment(db: Session, payment: PaymentIntent) -> PaymentIntent:
         ProviderTransaction.resource_type=="payment_intent", ProviderTransaction.resource_id==payment.id,
     ).order_by(ProviderTransaction.created_at.desc()))
     if not tx: tx = create_provider_transaction(db, resource_type="payment_intent", resource=payment, direction="inbound")
-    payment.status="processing"; db.add(payment); db.commit()
-    result = await provider.collect(
-        amount=payment.amount, currency=payment.currency, phone=_provider_phone(payment.provider,payment.customer_phone or ""),
-        transaction_reference=tx.transaction_reference, third_party_conversation_id=tx.third_party_conversation_id,
-        description=payment.description or payment.reference,
-    )
+    # Compare-and-swap prevents simultaneous confirmations from issuing
+    # multiple C2B requests. Commit the claim BEFORE provider network I/O.
+    claimed = db.execute(
+        update(PaymentIntent)
+        .where(
+            PaymentIntent.id == payment.id,
+            PaymentIntent.status.in_(("created", "requires_confirmation")),
+        )
+        .values(status="processing")
+        .execution_options(synchronize_session=False)
+    ).rowcount
+    db.commit()
+    if claimed != 1:
+        db.refresh(payment)
+        return payment
+    try:
+        result = await provider.collect(
+            amount=payment.amount, currency=payment.currency, phone=_provider_phone(payment.provider,payment.customer_phone or ""),
+            transaction_reference=tx.transaction_reference, third_party_conversation_id=tx.third_party_conversation_id,
+            description=payment.description or payment.reference,
+        )
+    except (httpx.TimeoutException, httpx.TransportError):
+        # Provider may have collected funds despite a lost response.
+        # Keep the original correlation IDs for read-only reconciliation.
+        payment.status = "unknown"
+        tx.status = "unknown"
+        db.add(payment); db.add(tx); db.commit(); db.refresh(payment)
+        return payment
     apply_provider_result(db, transaction=tx, result=result)
     db.commit(); db.refresh(payment)
     if payment.status == "succeeded":
