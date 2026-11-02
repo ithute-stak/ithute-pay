@@ -56,3 +56,56 @@ def test_unbalanced_posting_does_not_create_journal():
                        ("merchant_payable", Decimal("0"), Decimal("9"), None)],
             )
         assert db.scalar(select(func.count()).select_from(JournalEntry)) == 0
+
+
+def test_replayed_successful_provider_result_posts_one_journal():
+    """Exercise the actual result application, not only post_journal directly."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from database.models import PaymentIntent, ProviderTransaction
+    from services.payments import apply_provider_result
+
+    with SessionLocal() as db:
+        merchant = Merchant(name="Replay provider merchant", slug="replay-provider-merchant")
+        db.add(merchant)
+        db.flush()
+        app = Application(merchant_id=merchant.id, name="Replay provider app", environment="test")
+        db.add(app)
+        db.flush()
+        payment = PaymentIntent(
+            public_id="pi_replay_result", merchant_id=merchant.id,
+            application_id=app.id, amount=Decimal("10.00"),
+            currency="LSL", provider="mpesa",
+            customer_phone="26650000000", reference="replay-result",
+            status="processing",
+        )
+        db.add(payment)
+        db.flush()
+        tx = ProviderTransaction(
+            merchant_id=merchant.id, application_id=app.id,
+            resource_type="payment_intent", resource_id=payment.id,
+            provider="mpesa", direction="inbound", amount=Decimal("10.00"),
+            currency="LSL", status="processing", transaction_reference="REPLAYRESULT",
+            third_party_conversation_id="REPLAY-RESULT-001",
+        )
+        db.add(tx)
+        db.commit()
+        result = SimpleNamespace(
+            status="succeeded", response_code="INS-0",
+            response_description="Success", conversation_id="conversation-001",
+            transaction_id="provider-transaction-001", raw={},
+            reversed=False,
+        )
+        # Isolate the test from settlement execution and webhook delivery.
+        # Financial posting and transaction status updates remain real.
+        with patch("services.payments.ensure_settlement_instruction"), patch(
+            "services.payments.publish_event"
+        ):
+            apply_provider_result(db, transaction=tx, result=result)
+            db.commit()
+            apply_provider_result(db, transaction=tx, result=result)
+            db.commit()
+        assert tx.status == "succeeded"
+        assert db.scalar(select(func.count()).select_from(JournalEntry)) == 1
+        assert db.scalar(select(func.count()).select_from(JournalLine)) >= 2
+        assert db.scalar(select(func.count()).select_from(LedgerEntry)) >= 2
