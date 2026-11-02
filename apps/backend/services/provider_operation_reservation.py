@@ -117,6 +117,6 @@ def claim_provider_dispatch(db: Session, *, operation_id: str) -> bool:
             ProviderOperation.status == PaymentState.CREATED.value,
         )
         .values(status=PaymentState.DISPATCHED.value)
-        .execution_options(synchronize_session=False)
+        .execution_options(synchronize_session="fetch")
     )
     return result.rowcount == 1
