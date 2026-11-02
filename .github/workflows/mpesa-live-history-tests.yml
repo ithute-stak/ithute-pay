@@ -36,4 +36,6 @@ jobs:
           python -m pip install -r apps/backend/requirements.txt pytest
       - name: Test live history and live-money safety guards
         working-directory: apps/backend
-        run: python -m pytest -q tests/test_mpesa_live_history.py tests/test_mpesa_live_testing_safety.py
+        run: |
+          rm -f tests/paybridge_test.db tests/paybridge_test.db-shm tests/paybridge_test.db-wal
+          python -m pytest -q tests/test_mpesa_live_history.py tests/test_mpesa_live_testing_safety.py
