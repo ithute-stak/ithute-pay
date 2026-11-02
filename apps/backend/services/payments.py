@@ -148,6 +148,13 @@ def _release_failed_payout_funding(db: Session, transaction: ProviderTransaction
 def apply_provider_result(db: Session, *, transaction: ProviderTransaction, result: ProviderResult) -> None:
     previous_status = transaction.status
     previously_confirmed = transaction.confirmed_at is not None
+    # Status queries and callbacks can arrive out of order. A confirmed
+    # success must never be overwritten by a stale failure/unknown response;
+    # likewise, a final failure is not reopened by an uncertain response.
+    if previous_status == "succeeded" and result.status != "succeeded":
+        return
+    if previous_status == "failed" and result.status in {"unknown", "processing"}:
+        return
     transaction.status = result.status
     transaction.response_code = result.response_code
     transaction.response_description = result.response_description
