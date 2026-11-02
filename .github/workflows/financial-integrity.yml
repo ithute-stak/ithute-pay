@@ -68,9 +68,15 @@ jobs:
         run: |
           python - <<'PY'
           import os
-          from database.session import engine
-          if engine.dialect.name != "postgresql":
+          from sqlalchemy import create_engine, text
+          from sqlalchemy.engine import make_url
+          url = make_url(os.environ["DATABASE_URL"])
+          if url.get_backend_name() != "postgresql":
               raise SystemExit("Financial integrity CI must use PostgreSQL")
+          # Check the disposable service directly without importing app settings,
+          # which are intentionally initialized by pytest's conftest fixture.
+          with create_engine(url, connect_args={"connect_timeout": 5}).connect() as connection:
+              connection.execute(text("SELECT 1"))
           if os.environ.get("PG_FINANCIAL_CONCURRENCY_TEST") != "true":
               raise SystemExit("PostgreSQL financial concurrency tests must be enabled")
           if os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true":
@@ -80,7 +86,7 @@ jobs:
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
-          python -m pytest -q --junitxml=financial-integrity-results.xml \
+          python -m pytest -vv -ra --tb=short --junitxml=financial-integrity-results.xml \
             tests/test_postgres_financial_concurrency.py \
             tests/test_financial_integrity_posting.py \
             tests/test_payment_lifecycle.py \
