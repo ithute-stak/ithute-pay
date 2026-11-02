@@ -27,3 +27,33 @@ def test_callback_operation_row_is_lockable_by_correlation():
         ProviderOperation.third_party_conversation_id == "sample",
     ).with_for_update()
     assert "FOR UPDATE" in str(stmt.compile(dialect=postgresql.dialect()))
+
+
+def test_duplicate_callback_is_recorded_once_in_database():
+    from types import SimpleNamespace
+    from sqlalchemy import func
+    from database.session import SessionLocal
+    from routers.providers import _record_callback
+
+    request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+    payload = {
+        "input_ThirdPartyConversationID": "TEST-CALLBACK-001",
+        "output_ResponseCode": "INS-0",
+    }
+    with SessionLocal() as db:
+        first, duplicate = _record_callback(
+            db, request=request, callback_type="result", payload=payload,
+            third="TEST-CALLBACK-001",
+        )
+        assert not duplicate
+        first_id = first.id
+        db.commit()
+
+        second, duplicate = _record_callback(
+            db, request=request, callback_type="result", payload=payload,
+            third="TEST-CALLBACK-001",
+        )
+        assert duplicate
+        assert second.id == first_id
+        db.commit()
+        assert db.scalar(select(func.count()).select_from(ProviderCallbackLog)) == 1
