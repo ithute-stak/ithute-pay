@@ -10,7 +10,7 @@ import hashlib
 import json
 
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -101,3 +101,22 @@ def advance_provider_operation(
     row.status = transition_payment(row.status, target, reconciled=reconciled).value
     db.flush()
     return row
+
+
+def claim_provider_dispatch(db: Session, *, operation_id: str) -> bool:
+    """Atomically claim a new operation for one outbound provider request.
+
+    Returns False if already claimed, processing, succeeded, failed, or unknown.
+    MUST commit this state change before making any network request.
+    An uncommitted claim does not provide crash-safe deduplication.
+    """
+    result = db.execute(
+        update(ProviderOperation)
+        .where(
+            ProviderOperation.id == operation_id,
+            ProviderOperation.status == PaymentState.CREATED.value,
+        )
+        .values(status=PaymentState.DISPATCHED.value)
+        .execution_options(synchronize_session=False)
+    )
+    return result.rowcount == 1
