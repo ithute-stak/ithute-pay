@@ -373,9 +373,9 @@ export default function Page() {
     setActiveTab("configure");
   }
 
-  function configureItem(item: ProviderCatalogueItem) {
+  function configureItem(item: ProviderCatalogueItem, selected?: any) {
     if (!item.provider || item.roadmap) return;
-    const existing = rowsFor(item).find((row: any) => row.active)
+    const existing = selected || rowsFor(item).find((row: any) => row.active)
       || rowsFor(item).find((row: any) => row.environment === "sandbox")
       || rowsFor(item)[0];
     const environment = existing?.environment || "sandbox";
@@ -439,6 +439,11 @@ export default function Page() {
       payload.service_provider_code = String(form.service_provider_code || "").trim();
       if (form.mode === "live" && !payload.service_provider_code) {
         setFormError("Enter the exact Service Provider Code attached to this M-Pesa application. Ithute Pay Bridge does not guess a sandbox or production shortcode.");
+        setConfigureStep(2);
+        return;
+      }
+      if (form.environment === "production" && form.mode === "live" && (!String(form.origin || "").trim() || String(form.origin).trim() === "*")) {
+        setFormError("Production M-Pesa requires the exact Origin registered with Vodacom; the sandbox wildcard * cannot be used. Ask Vodacom to confirm your Origin, then update this field.");
         setConfigureStep(2);
         return;
       }
@@ -655,6 +660,11 @@ export default function Page() {
                             Activate
                           </Button>
                         )}
+                        {PROVIDER_CATALOGUE.find((item) => item.provider === r.provider) && (
+                          <Button size="sm" variant="secondary" onClick={() => configureItem(PROVIDER_CATALOGUE.find((item) => item.provider === r.provider)!, r)}>
+                            Edit
+                          </Button>
+                        )}
                         <Button size="sm" variant="secondary" onClick={() => setViewingProvider(r)}>
                           <Eye className="mr-1 h-4 w-4" />View
                         </Button>
@@ -843,7 +853,7 @@ export default function Page() {
                           <Field label="Service Provider Code / shortcode" hint={form.environment === "sandbox" ? "Use the exact test Service Provider Code tied to this sandbox application." : "Use the organisation shortcode issued or approved for this product."}>
                             <Input aria-label="M-Pesa Service Provider Code" placeholder={form.environment === "sandbox" ? "Exact sandbox Service Provider Code" : "Organisation shortcode"} value={form.service_provider_code} onChange={(e)=>setForm({...form,service_provider_code:e.target.value})}/>
                           </Field>
-                          <Field label="Registered Origin" hint="It must match the Origin configured for the selected M-Pesa application.">
+                          <Field label="Registered Origin" hint={form.environment === "production" ? "Required: exact production Origin approved by Vodacom. The sandbox wildcard * is not accepted." : "Use the Origin registered for this sandbox application."}>
                             <Input aria-label="M-Pesa registered Origin" placeholder="Origin registered for this application" value={form.origin} onChange={(e)=>setForm({...form,origin:e.target.value})}/>
                           </Field>
                           <Field label="Application API key" className="sm:col-span-2" hint="Leave blank to keep the encrypted API key already stored.">
