@@ -464,6 +464,7 @@ export default function MpesaTestingPage() {
         description="One workspace for the full Sandbox certification matrix, guarded Live production verification, provider evidence and downloadable DOCX reports."
         actions={
           <div className="flex flex-wrap gap-2">
+            <Button asChild variant="secondary"><Link href="/dashboard/testing/live-history">Live verification history</Link></Button>
             <Button variant="secondary" onClick={clearReportResults} disabled={!storedCount}>
               <Trash2 className="h-4 w-4" />Clear results
             </Button>
