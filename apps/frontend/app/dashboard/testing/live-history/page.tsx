@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { PageHeader } from "@/components/dashboard/page-header";
+import { API_URL } from "@/lib/api";
 
 type Verification = {
   run_id: string;
@@ -25,7 +26,7 @@ export default function LiveVerificationHistory() {
     const controller = new AbortController();
     async function load() {
       try {
-        const response = await fetch("/api/v1/admin/testing/mpesa-live/history", {
+        const response = await fetch(`${API_URL}/admin/testing/mpesa-live/history`, {
           credentials: "include",
           headers: { Accept: "application/json" },
           signal: controller.signal,
