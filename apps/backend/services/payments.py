@@ -3,7 +3,8 @@ from __future__ import annotations
 from decimal import Decimal
 
 from fastapi import HTTPException
-from sqlalchemy import select
+import httpx
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from database.models import (
@@ -306,8 +307,28 @@ async def execute_payout(db: Session, payout: Payout) -> Payout:
         # tenant shortcode supplies input_ServiceProviderCode while PayBridge
         # retains all M-Pesa credentials. Legacy merchants keep their old path.
         provider=provider_for_resource(db,payout); require_provider_capability(provider,"payout")
-        payout.status="processing"; db.add(payout); db.commit()
-        result=await provider.payout(amount=payout.amount,currency=payout.currency,phone=_provider_phone(payout.provider,payout.destination_phone),transaction_reference=tx.transaction_reference,third_party_conversation_id=tx.third_party_conversation_id,description=payout.description or payout.reference)
+        # Only one request may claim a newly created payout. Persist the
+        # claim before provider I/O so concurrent requests cannot pay twice.
+        claimed = db.execute(
+            update(Payout)
+            .where(Payout.id == payout.id, Payout.status == "created")
+            .values(status="processing")
+            .execution_options(synchronize_session=False)
+        ).rowcount
+        db.commit()
+        if claimed != 1:
+            db.refresh(payout)
+            return payout
+        try:
+            result=await provider.payout(amount=payout.amount,currency=payout.currency,phone=_provider_phone(payout.provider,payout.destination_phone),transaction_reference=tx.transaction_reference,third_party_conversation_id=tx.third_party_conversation_id,description=payout.description or payout.reference)
+        except (httpx.TimeoutException, httpx.TransportError):
+            # A lost response is not proof of a failed payout.
+            # Preserve the original provider correlation reference and
+            # forbid re-dispatch pending explicit reconciliation.
+            payout.status="unknown"
+            tx.status="unknown"
+            db.add(payout); db.add(tx); db.commit(); db.refresh(payout)
+            return payout
         apply_provider_result(db,transaction=tx,result=result); db.commit(); db.refresh(payout); return payout
     if payout_funding_mode(payout) == "direct_mpesa":
         return await _start_direct_funding(db,payout,tx)
