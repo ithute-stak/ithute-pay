@@ -107,3 +107,40 @@ def test_parallel_journal_posting_unique_source_constraint():
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(JournalEntry)) == 1
         assert db.scalar(select(func.count()).select_from(JournalLine)) == 2
+
+
+def test_parallel_idempotency_reservation_allows_one_record():
+    """Competing requests with the same key cannot create two provider operations."""
+    from fastapi import HTTPException
+
+    merchant_id, app_id = _company()
+    barrier = Barrier(2)
+    fingerprint = payment_request_fingerprint({"amount": "10.00", "currency": "LSL"})
+    def reserve(index):
+        with SessionLocal() as db:
+            barrier.wait(timeout=10)
+            try:
+                operation, created = reserve_provider_operation(
+                    db, application_id=app_id, merchant_id=merchant_id,
+                    provider="mpesa", operation_type="b2c",
+                    idempotency_key="same-user-instruction",
+                    request_hash=fingerprint, resource_type="payout",
+                    resource_id="test-payout",
+                    third_party_conversation_id=f"RACE-IDEMP-{index}",
+                )
+                db.commit()
+                return "created" if created else "existing"
+            except HTTPException as exc:
+                db.rollback()
+                assert exc.status_code == 409
+                return "conflict"
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(reserve, index) for index in range(2)]
+        results = [future.result(timeout=15) for future in futures]
+
+    assert results.count("created") == 1
+    assert len(results) == 2
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(ProviderOperation)) == 1
+        assert db.scalar(select(func.count()).select_from(IdempotencyRecord)) == 1
