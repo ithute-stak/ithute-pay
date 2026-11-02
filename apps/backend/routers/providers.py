@@ -7,6 +7,7 @@ from urllib.parse import urlencode
 from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import RedirectResponse
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from database.config.config import settings
@@ -176,7 +177,24 @@ def _record_callback(
         processing_status="received",
     )
     db.add(row)
-    db.flush()
+    try:
+        db.flush()
+    except IntegrityError:
+        # A concurrent callback may have inserted the identical payload after
+        # our initial SELECT. The unique constraint selects one winner.
+        db.rollback()
+        existing = db.scalar(
+            select(ProviderCallbackLog).where(
+                ProviderCallbackLog.provider == "mpesa",
+                ProviderCallbackLog.callback_type == callback_type,
+                ProviderCallbackLog.payload_hash == digest,
+            )
+        )
+        if existing is None:
+            raise
+        existing.duplicate = True
+        db.add(existing)
+        return existing, True
     return row, False
 
 
@@ -254,7 +272,7 @@ async def _process_mpesa_result(
         select(ProviderTransaction).where(
             ProviderTransaction.provider == "mpesa",
             ProviderTransaction.third_party_conversation_id == third,
-        )
+        ).with_for_update()
     )
     if tx:
         if _correlation_mismatch(tx.conversation_id, result):
@@ -271,7 +289,7 @@ async def _process_mpesa_result(
             select(ProviderOperation).where(
                 ProviderOperation.provider == "mpesa",
                 ProviderOperation.third_party_conversation_id == third,
-            )
+            ).with_for_update()
         )
         if not operation:
             log.processing_status = "unmatched"
