@@ -5,6 +5,22 @@ TEST_DB = Path(__file__).parent / "paybridge_test.db"
 os.environ["ENVIRONMENT"] = "test"
 if os.environ.get("GOLINK_PG_CONCURRENCY_TEST") != "true":
     os.environ["DATABASE_URL"] = f"sqlite+pysqlite:///{TEST_DB}"
+else:
+    # This fixture DROPS ALL TABLES. Require an unmistakably disposable
+    # local test database, never a production or shared remote instance.
+    from sqlalchemy.engine import make_url
+
+    url = make_url(os.environ.get("DATABASE_URL", ""))
+    if (
+        not url.drivername.startswith("postgresql")
+        or url.host not in {"localhost", "127.0.0.1"}
+        or not url.database
+        or not url.database.endswith("_test")
+    ):
+        raise RuntimeError(
+            "PostgreSQL test mode requires a LOCAL disposable database "
+            "whose name ends in _test; refusing destructive schema reset."
+        )
 os.environ["MPESA_ENABLED"] = "false"
 os.environ["MPESA_MODE"] = "simulator"
 os.environ["SECRET_KEY"] = "test-secret-long-enough-for-tests"
