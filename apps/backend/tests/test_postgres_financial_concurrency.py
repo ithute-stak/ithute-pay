@@ -151,3 +151,37 @@ def test_parallel_idempotency_reservation_allows_one_record():
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(ProviderOperation)) == 1
         assert db.scalar(select(func.count()).select_from(IdempotencyRecord)) == 1
+
+
+def test_parallel_identical_mpesa_callbacks_one_log():
+    """Concurrent identical callback arrivals converge to one durable record."""
+    from types import SimpleNamespace
+    from database.models import ProviderCallbackLog
+    from routers.providers import _record_callback
+
+    barrier = Barrier(2)
+    payload = {
+        "input_ThirdPartyConversationID": "TEST-PG-CALLBACK-RACE",
+        "output_ResponseCode": "INS-0",
+        "output_TransactionID": "TEST-TX-001",
+    }
+    def receive():
+        with SessionLocal() as db:
+            request = SimpleNamespace(client=SimpleNamespace(host="127.0.0.1"))
+            barrier.wait(timeout=10)
+            row, duplicate = _record_callback(
+                db, request=request, callback_type="result",
+                payload=payload, third="TEST-PG-CALLBACK-RACE",
+            )
+            callback_id = row.id
+            db.commit()
+            return callback_id, duplicate
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures = [pool.submit(receive) for _ in range(2)]
+        results = [future.result(timeout=15) for future in futures]
+
+    assert len({id_ for id_, _ in results}) == 1
+    assert sorted(duplicate for _, duplicate in results) == [False, True]
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(ProviderCallbackLog)) == 1
