@@ -176,6 +176,38 @@ jobs:
           docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
             --workdir /app/backend --entrypoint python app -m alembic upgrade head
           docker compose -f deploy/staging/compose.yaml up -d app
+          # Refuse to certify staging if its schema is behind Alembic head.
+          docker compose -f deploy/staging/compose.yaml exec -T \
+            --workdir /app/backend app python -m alembic current --check
+          # Confirm the *running container's* effective values, not just YAML.
+          docker compose -f deploy/staging/compose.yaml exec -T app python - <<'PY'
+          import os
+          from pathlib import Path
+
+          required_false = (
+              "RUN_MIGRATIONS_ON_START", "RUN_BACKGROUND_JOBS",
+              "MPESA_ENABLED", "ITHUTE_PUSH_ENABLED",
+              "ITHUTE_RECON_PUSH_DISPATCH_ENABLED",
+              "GOLINK_COLLECTIONS_ENABLED", "GOLINK_RECONCILIATION_ENABLED",
+              "AUTO_CREATE_PLATFORM_ADMIN", "SANDBOX_TEST_LAB_ENABLED",
+          )
+          for name in required_false:
+              assert os.environ.get(name, "").lower() in {"false", "0", "off", "no"}, name
+          assert os.environ.get("ENVIRONMENT") == "staging"
+          assert os.environ.get("MPESA_MODE") == "simulator"
+          assert os.environ.get("MPESA_ENVIRONMENT") == "sandbox"
+          # pid 1 starts FastAPI and Next.js but no celery child processes.
+          commands = []
+          for entry in Path("/proc").iterdir():
+              if not entry.name.isdigit():
+                  continue
+              try:
+                  commands.append((entry / "cmdline").read_bytes().replace(b"\\x00", b" ").decode(errors="replace"))
+              except (OSError, PermissionError):
+                  pass
+          assert not any("celery" in command.lower() for command in commands), "unexpected celery process"
+          print("Staging runtime settings and scheduled-job isolation verified")
+          PY
           for attempt in $(seq 1 36); do
             if docker compose -f deploy/staging/compose.yaml exec -T app python /app/backend/scripts/staging_postdeploy_smoke.py --api-port 8001 --web-port 3001; then
               echo "Combined PR image passed isolated staging deployment smoke"
