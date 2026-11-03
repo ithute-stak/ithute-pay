@@ -115,3 +115,50 @@ def test_revocation_is_persistent_and_idempotent(client):
     assert client.post(path, headers=headers).json()["revoked"] is True
     assert client.post(path, headers=headers).json()["revoked"] is True
     assert client.get(base + "/credentials").json()[0]["revoked"] is True
+
+
+def test_rotation_replaces_old_key_without_activating_app(client):
+    merchant, _, app, _ = _seed()
+    headers = _login(client)
+    base = _base(merchant, app)
+    first = client.post(base + "/test-credentials", headers=headers, json={
+        "name": "Diagnostics", "scopes": ["events:read"], "validity_days": 7,
+    })
+    assert first.status_code == 201, first.text
+    first_id = first.json()["id"]
+    assert first.json()["expires_at"] is not None
+    rotated = client.post(base + f"/credentials/{first_id}/rotate", headers=headers)
+    assert rotated.status_code == 201, rotated.text
+    assert rotated.json()["replaced_key_id"] == first_id
+    assert rotated.json()["secret"] != first.json()["secret"]
+    assert rotated.json()["usable"] is False
+    assert client.post(base + f"/credentials/{first_id}/rotate", headers=headers).status_code == 409
+    with SessionLocal() as db:
+        assert db.get(ApiKey, first_id).revoked_at is not None
+        assert db.get(ApiKey, rotated.json()["id"]).revoked_at is None
+        assert db.get(Application, app).status == "inactive"
+
+
+def test_rotation_refuses_foreign_key(client):
+    merchant, other, app, foreign_app = _seed()
+    with SessionLocal() as db:
+        key = ApiKey(application_id=foreign_app, name="Foreign", prefix="ipb_test_foreign",
+                     secret_hash="0" * 64, last4="0000", scopes=["events:read"])
+        db.add(key)
+        db.commit()
+        key_id = key.id
+    headers = _login(client)
+    response = client.post(_base(merchant, app) + f"/credentials/{key_id}/rotate", headers=headers)
+    assert response.status_code == 404
+
+
+def test_test_key_expiration_is_bounded(client):
+    merchant, _, app, _ = _seed()
+    headers = _login(client)
+    url = _base(merchant, app) + "/test-credentials"
+    for duration in (0, 91):
+        response = client.post(url, headers=headers, json={
+            "name": "Invalid duration", "scopes": ["events:read"],
+            "validity_days": duration,
+        })
+        assert response.status_code == 422
