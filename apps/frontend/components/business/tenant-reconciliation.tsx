@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import TenantReconciliationCase from "@/components/business/tenant-reconciliation-case";
 import TenantReconciliationOperations from "@/components/business/tenant-reconciliation-operations";
+import TenantReconciliationAlerts from "@/components/business/tenant-reconciliation-alerts";
 
 type ReconItem = {
   id: string; reconciliation_date: string; provider: string; status: string;
@@ -111,6 +112,7 @@ export default function TenantReconciliation({ merchantId, start, end, role }: {
       </table>
     </div>
     <TenantReconciliationOperations merchantId={merchantId} />
+    <TenantReconciliationAlerts merchantId={merchantId} role={role} />
     {selected && <div className="mt-3 rounded-xl border border-border p-4 text-sm">
       <p className="font-semibold">Recorded evidence</p>
       <p className="mt-1 break-all">Provider transaction reference: {selected.provider_transaction_id || "Not supplied"}</p>
