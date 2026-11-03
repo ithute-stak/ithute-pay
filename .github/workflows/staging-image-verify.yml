@@ -1,0 +1,73 @@
+# Read-only registry image verification. This does not publish, run, or deploy.
+name: IthutePay immutable staging image verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact approved 40-character Git commit SHA
+        required: true
+        type: string
+      image_digest:
+        description: Exact published GHCR sha256 digest (64 lowercase hex characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify-published-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check immutable release identifiers
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid source commit"; exit 1; }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid registry digest"; exit 1; }
+          echo "Immutable identifier formats validated"
+      - name: Checkout exact approved commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Refuse checkout mismatch
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
+          echo "Approved source commit exists and matches checkout"
+      - name: Authenticate to GHCR for read-only pull
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify published immutable digest and source revision label
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/ithute-stak/ithute-pay@$IMAGE_DIGEST"
+          # Pull and inspect only; never run a container or initiate a payment.
+          docker pull "$IMAGE"
+          ACTUAL_REVISION="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          test "$ACTUAL_REVISION" = "$COMMIT_SHA" || {
+            echo "NO-GO: image provenance revision label does not match approved source"
+            exit 1
+          }
+          IMAGE_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "NO-GO: invalid local image ID"
+            exit 1
+          }
+          echo "READ-ONLY REGISTRY VERIFICATION PASSED"
+          echo "A digest and image revision label match is not cryptographic SLSA attestation verification."
+          echo "No registry publication, container execution, migration or deployment occurred."
