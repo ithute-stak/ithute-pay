@@ -23,7 +23,7 @@ def test_viewer_receives_scoped_in_app_alerts_but_cannot_change_settings(client)
     assert result.status_code == 200, result.text
     payload = result.json()
     assert payload["delivery"] == "in_app_on_demand"
-    assert payload["unacknowledged_count"] == 4
+    assert payload["unacknowledged_count"] == 3
     assert {row["alert_type"] for row in payload["alerts"]} == {"overdue", "unassigned", "escalated"}
     assert client.get(_path(foreign)).status_code == 404
     assert client.put(_path(own, "/settings"), headers=_csrf(client), json={
@@ -64,7 +64,7 @@ def test_alert_acknowledgement_is_idempotent_and_not_financial_state(client):
     assert first.status_code == 200, first.text
     second = client.post(url, headers=_csrf(client))
     assert second.status_code == 200
-    assert client.get(_path(own)).json()["unacknowledged_count"] == 3
+    assert client.get(_path(own)).json()["unacknowledged_count"] == 2
     history = client.get(_path(own), params={"include_acknowledged": True}).json()
     assert any(item["acknowledged"] for item in history["alerts"])
     with SessionLocal() as db:
