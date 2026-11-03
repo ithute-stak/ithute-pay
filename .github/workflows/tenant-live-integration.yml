@@ -68,7 +68,7 @@ jobs:
         run: python -m pip install -r apps/backend/requirements.txt
       - name: Seed disposable PostgreSQL with tenant-only fixtures
         working-directory: apps/backend
-        run: python scripts/seed_tenant_browser_integration.py
+        run: PYTHONPATH=. python scripts/seed_tenant_browser_integration.py
       - name: Start real FastAPI
         working-directory: apps/backend
         run: |
