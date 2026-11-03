@@ -266,6 +266,32 @@ def propose_agreement(
     return {"id": agreement.id, "version": agreement.version, "status": agreement.status}
 
 
+@router.get("/agreements")
+def list_agreements(
+    db: Session = Depends(get_db), _: User = Depends(_network_admin),
+):
+    master = _master(db)
+    tenant_ids = select(TenantMerchantContract.tenant_merchant_id).where(
+        TenantMerchantContract.master_merchant_id == master.merchant_id,
+    )
+    rows = db.scalars(select(MerchantCommercialAgreement).where(
+        MerchantCommercialAgreement.merchant_id.in_(tenant_ids),
+    ).order_by(
+        MerchantCommercialAgreement.created_at.desc(),
+    )).all()
+    return [{
+        "id": row.id, "merchant_id": row.merchant_id,
+        "version": row.version, "status": row.status, "currency": row.currency,
+        "inbound_fixed_fee": str(row.inbound_fixed_fee),
+        "inbound_percentage_fee": str(row.inbound_percentage_fee),
+        "outbound_fixed_fee": str(row.outbound_fixed_fee),
+        "outbound_percentage_fee": str(row.outbound_percentage_fee),
+        "provider_cost_payer": row.provider_cost_payer,
+        "proposed_by": row.proposed_by,
+        "approved_by": row.approved_by,
+    } for row in rows]
+
+
 @router.post("/agreements/{agreement_id}/approve")
 def approve_agreement(
     agreement_id: str,
