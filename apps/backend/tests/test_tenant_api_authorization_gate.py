@@ -3,6 +3,8 @@
 Tests intentionally model an active application (as could be set by an admin)
 to prove activation alone cannot turn tenant credentials into payment access.
 """
+import pytest
+
 from database.models import ApiKey, Application, Merchant, TenantMerchantContract
 from database.session import SessionLocal
 from core.security import generate_secret, sha256_text
@@ -58,11 +60,11 @@ def test_active_tenant_key_cannot_create_payment_or_webhook(client):
         assert result.status_code == 403, (path, result.text)
 
 
-def test_tenant_wildcard_and_empty_scopes_do_not_grant_access(client):
-    for scopes in ([], ["*"]):
-        secret = _seed(scopes=scopes)
-        response = client.get("/api/v1/developer/events", headers=_auth(secret))
-        assert response.status_code == 403
+@pytest.mark.parametrize("scopes", [[], ["*"]])
+def test_tenant_wildcard_and_empty_scopes_do_not_grant_access(client, scopes):
+    secret = _seed(scopes=scopes)
+    response = client.get("/api/v1/developer/events", headers=_auth(secret))
+    assert response.status_code == 403
 
 
 def test_suspended_tenant_is_denied_even_when_app_and_key_active(client):
