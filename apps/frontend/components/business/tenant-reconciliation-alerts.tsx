@@ -1,6 +1,7 @@
 "use client";
 
 import { FormEvent, useCallback, useEffect, useState } from "react";
+import TenantDeliveryMonitor from "@/components/business/tenant-delivery-monitor";
 
 type Policy = {
   overdue_after_days: number; unassigned_after_days: number;
@@ -169,5 +170,6 @@ export default function TenantReconciliationAlerts({ merchantId, role }: {
     {inbox && inbox.unacknowledged_count > inbox.display_limit && !includeAcknowledged &&
       <p className="mt-2 text-xs text-muted-foreground">Showing the first {inbox.display_limit} alerts.</p>}
     <p className="mt-3 text-xs text-muted-foreground">{inbox?.disclaimer}</p>
+    <TenantDeliveryMonitor merchantId={merchantId} role={role} />
   </div>;
 }
