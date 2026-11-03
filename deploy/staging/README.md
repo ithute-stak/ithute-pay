@@ -33,9 +33,9 @@ docker compose -f deploy/staging/compose.yaml config --quiet
 
 The complete stack uses an isolated project and newly created volumes named
 under `ithutepay-staging`. It has no shared production networks or containers.
-The only exposed ports bind to the host loopback: API `127.0.0.1:18001`
-and web `127.0.0.1:13001`. The Docker bridge is marked `internal: true`;
-container-to-Internet payment provider calls cannot reach external addresses.
+No host ports are exposed. Docker's fully internal bridge prevents access
+from the host through published ports and blocks container-to-Internet
+payment-provider requests. Run the read-only smoke check via `compose exec`.
 
 ## Migration and start (only after change approval)
 
@@ -62,7 +62,8 @@ Start the combined staging app only after migrations succeed:
 
 ```bash
 docker compose -f deploy/staging/compose.yaml up -d app
-curl --fail http://127.0.0.1:18001/health
+docker compose -f deploy/staging/compose.yaml exec -T app python \
+  /app/backend/scripts/staging_postdeploy_smoke.py --api-port 8001 --web-port 3001
 ```
 
 Never pass the staging Compose project name to a production Docker command.
@@ -75,25 +76,27 @@ Never run `down -v` until separately approved data destruction is intended.
 - Staging is intentionally offline. External provider sandbox certification
   requires a **separate** approved environment, controlled credentials and
   recorded transaction/callback evidence.
-- Loopback-only staging cannot be reached from another workstation without an
-  independently approved tunnel; do not expose these ports publicly.
-- The combined application image also starts background processes. Review its
-  Celery schedules and disable unexpected external integrations before using
-  real-looking test data.
+- Fully isolated staging exposes no ports, not even to the host. The smoke
+  probe runs *inside* the app container, so no web access is implied.
+- The combined application's production default starts Celery worker and beat;
+  this stack explicitly sets `RUN_BACKGROUND_JOBS=false` to suppress both.
+  Do not enable scheduled payment settlement or payout recovery on staging.
 - Docker network isolation does not replace host firewall and operator access
   controls.
 
 
 ## Read-only post-deployment smoke (after approved deployment)
 
-After the isolated stack is started, run the following on the **staging host**
-from the repository checkout:
+After the isolated stack is started, execute the test **inside the isolated
+app container** from the staging host:
 
 ```bash
-python apps/backend/scripts/staging_postdeploy_smoke.py
+docker compose -f deploy/staging/compose.yaml exec -T app python \
+  /app/backend/scripts/staging_postdeploy_smoke.py --api-port 8001 --web-port 3001
 ```
 
-The script connects only to `127.0.0.1:18001` and `127.0.0.1:13001`.
+The script connects only to `127.0.0.1:8001` and `127.0.0.1:3001`
+*inside the container*.
 It verifies `GET /` identifies the running API as **staging**, `GET /health`
 returns a database-backed healthy response, and the frontend root returns
 HTTP 200 HTML. The client never follows redirects, authenticates or sends a
