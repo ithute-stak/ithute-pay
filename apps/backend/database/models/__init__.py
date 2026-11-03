@@ -25,6 +25,7 @@ from database.models.tenancy import (
     PlatformMerchantSettings, TenantMerchantContract, TenantProviderAccount,
     MerchantCommercialAgreement,
 )
+from database.models.tenant_membership import TenantUserMembership
 from database.models.user import User
 from database.models.webhook import Event, WebhookDelivery, WebhookEndpoint
 
@@ -41,5 +42,5 @@ __all__ = [
     'ConnectorConfiguration', 'MerchantComplianceProfile', 'ReconciliationRun',
     'RiskDecision', 'RiskRule', 'SettlementBatch',
     'PlatformMerchantSettings', 'TenantMerchantContract', 'TenantProviderAccount',
-    'MerchantCommercialAgreement',
+    'MerchantCommercialAgreement', 'TenantUserMembership',
 ]
