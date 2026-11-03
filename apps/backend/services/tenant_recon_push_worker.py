@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from sqlalchemy import or_, select
+from sqlalchemy import or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
@@ -191,11 +191,19 @@ def dispatch_one(db: Session, delivery_id: str, attempt: int, now: datetime) -> 
         TenantReconciliationAlertAcknowledgement.user_id == row.recipient_user_id,
         TenantReconciliationAlertAcknowledgement.alert_type == row.alert_type,
     ))
-    if not active or acknowledged or not enabled():
-        row.status = "cancelled"
-        row.lease_until = None
+    # A reclaimed lease has a newer attempt number; never allow an old
+    # worker to overwrite its state after a delayed provider response.
+    def finalize(values: dict, outcome: str) -> str:
+        changed = db.execute(update(TenantReconciliationPushDelivery).where(
+            TenantReconciliationPushDelivery.id == delivery_id,
+            TenantReconciliationPushDelivery.status == "leased",
+            TenantReconciliationPushDelivery.attempts == attempt,
+        ).values(**values)).rowcount
         db.commit()
-        return "cancelled"
+        return outcome if changed else "skipped"
+
+    if not active or acknowledged or not enabled():
+        return finalize({"status": "cancelled", "lease_until": None}, "cancelled")
     # Do not include financial values, customer data or evidence notes.
     try:
         result = send_notification(
@@ -208,22 +216,20 @@ def dispatch_one(db: Session, delivery_id: str, attempt: int, now: datetime) -> 
             idempotency_key=f"recon-push:{row.id}",
         )
     except (IthutePushDisabled, IthutePushUnavailable):
-        row.last_error_code = "push_unavailable"
-        if attempt >= MAX_ATTEMPTS:
-            row.status = "failed"
-        else:
-            row.status = "pending"
-            row.next_attempt_at = now + timedelta(seconds=RETRY_BASE_SECONDS * (2 ** (attempt - 1)))
-        row.lease_until = None
-        db.commit()
-        return row.status
-    row.status = "delivered"
-    row.delivered_at = now
-    row.lease_until = None
-    row.last_error_code = None
-    row.provider_message_id = str(result.get("id") or result.get("message_id") or "")[:200] or None
-    db.commit()
-    return "delivered"
+        return finalize({
+            "status": "failed" if attempt >= MAX_ATTEMPTS else "pending",
+            "last_error_code": "push_unavailable",
+            "next_attempt_at": (now + timedelta(seconds=RETRY_BASE_SECONDS * (2 ** (attempt - 1))))
+            if attempt < MAX_ATTEMPTS else None,
+            "lease_until": None,
+        }, "failed" if attempt >= MAX_ATTEMPTS else "pending")
+    return finalize({
+        "status": "delivered",
+        "delivered_at": now,
+        "lease_until": None,
+        "last_error_code": None,
+        "provider_message_id": str(result.get("id") or result.get("message_id") or "")[:200] or None,
+    }, "delivered")
 
 
 def run_once() -> dict:
