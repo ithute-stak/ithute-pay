@@ -44,7 +44,7 @@ def _run_migrations() -> None:
 
 
 def _specs() -> list[ProcessSpec]:
-    return [
+    specs = [
         ProcessSpec(
             "fastapi",
             [
@@ -91,6 +91,11 @@ def _specs() -> list[ProcessSpec]:
             FRONTEND_DIR,
         ),
     ]
+    # Existing production deployments retain all workers by default.
+    # Offline staging explicitly disables settlement/recovery schedulers.
+    if os.getenv("RUN_BACKGROUND_JOBS", "true").strip().lower() in {"0", "false", "no", "off"}:
+        return [spec for spec in specs if spec.name in {"fastapi", "nextjs"}]
+    return specs
 
 
 def main() -> int:
