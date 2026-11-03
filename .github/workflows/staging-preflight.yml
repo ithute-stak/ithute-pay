@@ -45,7 +45,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install pytest PyYAML
-          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py tests/test_staging_postdeploy_smoke.py tests/test_staging_supervisor_contract.py
+          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py tests/test_staging_postdeploy_smoke.py tests/test_staging_supervisor_contract.py tests/test_staging_image_verify_workflow.py
       - name: Refuse missing release evidence
         working-directory: apps/backend
         run: |
