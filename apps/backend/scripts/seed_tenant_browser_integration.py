@@ -33,7 +33,11 @@ with SessionLocal() as db:
     master = Merchant(name="CI Master", slug="integration-master")
     alpha = Merchant(name="Alpha Integration Merchant", slug="integration-alpha")
     beta = Merchant(name="Beta Integration Merchant", slug="integration-beta")
-    foreign = Merchant(name="Foreign Integration Merchant", slug="integration-foreign")
+    # Predictable synthetic ID lets HTTP-only browser tests attempt direct URL tampering.
+    foreign = Merchant(
+        id="00000000-0000-4000-8000-000000000333",
+        name="Foreign Integration Merchant", slug="integration-foreign",
+    )
     db.add_all([master, alpha, beta, foreign])
     db.flush()
     for merchant in (alpha, beta, foreign):
