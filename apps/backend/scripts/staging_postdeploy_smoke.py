@@ -80,9 +80,9 @@ def verify_staging(api_port: int = 18001, web_port: int = 13001) -> list[str]:
     try:
         web = _local_get(web_port, "/login")
         if web.status != 200 or "text/html" not in web.content_type.lower():
-            errors.append("Web sign-in page must return HTTP 200 HTML")
+            errors.append("Web frontend sign-in page must return HTTP 200 HTML")
         elif b"<html" not in web.body.lower():
-            errors.append("Web sign-in page did not return an HTML document")
+            errors.append("Web frontend sign-in page did not return an HTML document")
     except (OSError, http.client.HTTPException, ValueError):
         errors.append("Web frontend unavailable or invalid")
     return errors
