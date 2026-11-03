@@ -46,7 +46,7 @@ On an authorised test host with a clean staging database or a separately
 restored, sanitised snapshot, start only database and Redis:
 
 ```bash
-docker compose -f deploy/staging/compose.yaml up -d postgres redis
+docker compose -f deploy/staging/compose.yaml up -d --wait --wait-timeout 120 postgres redis
 ```
 
 Run migrations **explicitly** after review, using the image, Compose
