@@ -99,6 +99,7 @@ jobs:
             tests/test_tenant_reconciliation.py \
             tests/test_tenant_reconciliation_cases.py \
             tests/test_tenant_reconciliation_operations.py \
+            tests/test_tenant_reconciliation_alerts.py \
             tests/test_merchant_payout_dispatch_claim.py \
             tests/test_collection_dispatch_claim.py \
             tests/test_reconciliation_terminal_state.py \
