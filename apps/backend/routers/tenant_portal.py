@@ -18,6 +18,7 @@ from database.models import (
 )
 from database.session import get_db
 from routers.merchant_network_admin import _network_admin
+from routers.tenant_management import ShortcodeRequest
 from services.audit import write_audit
 
 router = APIRouter(prefix="/tenant-portal", tags=["Tenant Merchant Portal"])
@@ -176,3 +177,53 @@ def suspend_tenant_access(
     )
     db.commit()
     return {"id": row.id, "status": row.status}
+
+
+@router.post("/merchants/{merchant_id}/shortcode-requests", status_code=201)
+def submit_portal_shortcode(
+    merchant_id: str,
+    payload: "ShortcodeRequest",
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Human-user shortcode request; this never activates provider routing."""
+    from routers.tenant_management import _shortcode_payload
+
+    _allowed_tenant(db, user, merchant_id)
+    member = db.scalar(select(TenantUserMembership).where(
+        TenantUserMembership.user_id == user.id,
+        TenantUserMembership.merchant_id == merchant_id,
+        TenantUserMembership.status == "active",
+    ))
+    if member is None or member.role not in ("owner", "manager"):
+        raise HTTPException(status_code=403, detail="Owner or manager role required")
+    contract = db.scalar(select(TenantMerchantContract).where(
+        TenantMerchantContract.tenant_merchant_id == merchant_id,
+        TenantMerchantContract.status == "approved",
+        TenantMerchantContract.kyc_status == "verified",
+        TenantMerchantContract.custody_mode == "own_shortcode",
+    ))
+    if contract is None:
+        raise HTTPException(status_code=403, detail="Approved own-shortcode contract required")
+    account = TenantProviderAccount(
+        merchant_id=merchant_id, provider=payload.provider,
+        environment=payload.environment, shortcode=payload.shortcode,
+        ownership_status="pending", enabled=False,
+    )
+    db.add(account)
+    try:
+        db.flush()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Shortcode already registered") from None
+    write_audit(
+        db, actor_type="user", actor_id=user.id,
+        action="tenant_shortcode.requested",
+        resource_type="tenant_provider_account",
+        resource_id=account.id, merchant_id=merchant_id,
+        metadata={"provider": account.provider, "environment": account.environment,
+                  "source": "tenant_portal"},
+    )
+    db.commit()
+    db.refresh(account)
+    return _shortcode_payload(account)
