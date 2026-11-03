@@ -75,6 +75,10 @@ class Settings(BaseSettings):
     ITHUTE_PUSH_URL: str = 'https://push.ithute.co.ls'
     ITHUTE_PUSH_SERVICE_CLIENT_SECRET: str = ''
     ITHUTE_PUSH_HTTP_TIMEOUT_SECONDS: float = 10.0
+    # Phase 17: separately gated tenant reconciliation push job (off by default).
+    ITHUTE_RECON_PUSH_DISPATCH_ENABLED: bool = False
+    ITHUTE_RECON_PUSH_BATCH_SIZE: int = Field(default=50, ge=1, le=500)
+
 
     API_SIGNATURE_MAX_AGE_SECONDS: int = 300
     API_SIGNATURE_REQUIRED_BY_DEFAULT: bool = False
