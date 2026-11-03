@@ -38,6 +38,7 @@ def _row(row: TenantReconciliationPushDelivery) -> dict:
         "recipient_user_id": row.recipient_user_id,
         "alert_type": row.alert_type,
         "status": row.status, "attempts": row.attempts,
+        "manual_retries": row.manual_retries,
         "last_error_code": row.last_error_code,
         "next_attempt_at": row.next_attempt_at.isoformat() if row.next_attempt_at else None,
         "delivered_at": row.delivered_at.isoformat() if row.delivered_at else None,
@@ -99,6 +100,8 @@ def retry_failed_delivery(
         raise HTTPException(status_code=404, detail="Delivery not found")
     if row.status != "failed" or row.attempts < MAX_ATTEMPTS:
         raise HTTPException(status_code=409, detail="Only exhausted failed deliveries can be retried")
+    if row.manual_retries >= 1:
+        raise HTTPException(status_code=409, detail="Manual retry allowance exhausted")
     case = db.scalar(select(TenantReconciliationException).where(
         TenantReconciliationException.id == row.case_id,
         TenantReconciliationException.merchant_id == merchant_id,
@@ -109,6 +112,7 @@ def retry_failed_delivery(
     # The worker will revalidate assignee, role, alert policy, tenant status
     # and acknowledgements before attempting the provider call.
     row.status = "pending"
+    row.manual_retries += 1
     row.attempts = 0
     row.next_attempt_at = datetime.now(timezone.utc)
     row.lease_until = None
