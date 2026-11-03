@@ -13,7 +13,7 @@ from sqlalchemy.orm import Session
 
 from core.access_control import get_current_active_user
 from database.models import (
-    Merchant, MerchantCommercialAgreement, TenantMerchantContract,
+    Application, ApiKey, Merchant, MerchantCommercialAgreement, TenantMerchantContract,
     TenantProviderAccount, TenantUserMembership, User,
 )
 from database.session import get_db
@@ -227,3 +227,117 @@ def submit_portal_shortcode(
     db.commit()
     db.refresh(account)
     return _shortcode_payload(account)
+
+
+class TenantApplicationCreate(BaseModel):
+    name: str = Field(min_length=2, max_length=120)
+    environment: str = Field(default="test", pattern="^(test|live)$")
+
+
+def _tenant_app_manager(db: Session, user: User, merchant_id: str) -> Merchant:
+    merchant = _allowed_tenant(db, user, merchant_id)
+    role = db.scalar(select(TenantUserMembership.role).where(
+        TenantUserMembership.user_id == user.id,
+        TenantUserMembership.merchant_id == merchant_id,
+        TenantUserMembership.status == "active",
+    ))
+    if role not in ("owner", "manager", "developer"):
+        raise HTTPException(status_code=403, detail="Application management role required")
+    return merchant
+
+
+def _application_data(row: Application) -> dict:
+    return {
+        "id": row.id, "name": row.name, "environment": row.environment,
+        "status": row.status, "credentials_issued": False,
+    }
+
+
+@router.get("/merchants/{merchant_id}/applications")
+def list_tenant_applications(
+    merchant_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _allowed_tenant(db, user, merchant_id)
+    rows = db.scalars(select(Application).where(
+        Application.merchant_id == merchant_id,
+    ).order_by(Application.created_at.desc())).all()
+    return [{
+        "id": row.id, "name": row.name,
+        "environment": row.environment, "status": row.status,
+    } for row in rows]
+
+
+@router.post("/merchants/{merchant_id}/applications", status_code=201)
+def create_tenant_application(
+    merchant_id: str,
+    payload: TenantApplicationCreate,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _tenant_app_manager(db, user, merchant_id)
+    contract = db.scalar(select(TenantMerchantContract).where(
+        TenantMerchantContract.tenant_merchant_id == merchant_id,
+        TenantMerchantContract.status == "approved",
+        TenantMerchantContract.kyc_status == "verified",
+        TenantMerchantContract.custody_mode == "own_shortcode",
+    ))
+    if contract is None:
+        raise HTTPException(status_code=403, detail="Approved own-shortcode tenant required")
+    # Deliberately inactive: registration must never grant access to provider,
+    # payment, transfer or payout routes. No credentials are generated here.
+    row = Application(
+        merchant_id=merchant_id, name=payload.name.strip(),
+        environment=payload.environment, status="inactive",
+    )
+    if not row.name:
+        raise HTTPException(status_code=422, detail="Application name required")
+    db.add(row)
+    db.flush()
+    write_audit(
+        db, actor_type="user", actor_id=user.id,
+        action="tenant_application.registered",
+        resource_type="application", resource_id=row.id,
+        merchant_id=merchant_id,
+        metadata={"environment": row.environment, "status": row.status},
+    )
+    db.commit()
+    db.refresh(row)
+    return _application_data(row)
+
+
+@router.post("/merchants/{merchant_id}/applications/{application_id}/disable")
+def disable_tenant_application(
+    merchant_id: str,
+    application_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    _tenant_app_manager(db, user, merchant_id)
+    row = db.scalar(select(Application).where(
+        Application.id == application_id,
+        Application.merchant_id == merchant_id,
+    ).with_for_update())
+    if row is None:
+        raise HTTPException(status_code=404, detail="Application not found")
+    if row.status != "active":
+        raise HTTPException(status_code=409, detail="Application is not active")
+    row.status = "inactive"
+    # Explicitly revoke any existing credentials as defence in depth.
+    from datetime import datetime, timezone
+    revoked_at = datetime.now(timezone.utc)
+    keys = db.scalars(select(ApiKey).where(
+        ApiKey.application_id == row.id,
+        ApiKey.revoked_at.is_(None),
+    ).with_for_update()).all()
+    for key in keys:
+        key.revoked_at = revoked_at
+    write_audit(
+        db, actor_type="user", actor_id=user.id,
+        action="tenant_application.disabled",
+        resource_type="application", resource_id=row.id,
+        merchant_id=merchant_id, metadata={"keys_revoked": len(keys)},
+    )
+    db.commit()
+    return {"id": row.id, "status": row.status, "keys_revoked": len(keys)}
