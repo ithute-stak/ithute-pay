@@ -127,21 +127,35 @@ async def get_merchant_context(
         TenantMerchantContract.tenant_merchant_id == merchant.id,
     ))
     if tenant is not None:
-        if (tenant.status != 'approved' or tenant.kyc_status != 'verified'
-                or tenant.custody_mode != 'own_shortcode'):
-            raise HTTPException(status_code=403, detail='Tenant processing is unavailable')
-        # No tenant live payment routing has been certified. Application
-        # activation elsewhere must never bypass these route-level gates.
-        if application.environment != 'test' or not token.startswith('ipb_test_'):
-            raise HTTPException(status_code=403, detail='Tenant live credentials are not enabled')
-        allowed_reads = {
-            ('GET', '/api/v1/developer/events'): 'events:read',
-            ('GET', '/api/v1/developer/webhook-endpoints'): 'webhooks:read',
-        }
-        required = allowed_reads.get((request.method.upper(), request.url.path))
+        route = (request.method.upper(), request.url.path)
         scopes = set(key.scopes or [])
-        if required is None or '*' in scopes or not scopes or required not in scopes:
-            raise HTTPException(status_code=403, detail='Tenant API action is not authorized')
+        # Preserve narrowly scoped legacy onboarding while Phase 9 blocks
+        # financial operations. Existing pre-tenant keys had empty scopes.
+        onboarding = {
+            ('GET', '/api/v1/merchant/tenancy/account'),
+            ('GET', '/api/v1/merchant/tenancy/shortcodes'),
+            ('POST', '/api/v1/merchant/tenancy/shortcodes'),
+            ('GET', '/api/v1/merchant/tenancy/agreement'),
+        }
+        if route in onboarding:
+            if scopes and 'tenancy:manage' not in scopes:
+                raise HTTPException(status_code=403, detail='Tenant onboarding scope required')
+            # Specific tenant-management handlers enforce contract state,
+            # shortcode ownership and KYC. Never dispatch payments here.
+        else:
+            if (tenant.status != 'approved' or tenant.kyc_status != 'verified'
+                    or tenant.custody_mode != 'own_shortcode'):
+                raise HTTPException(status_code=403, detail='Tenant processing is unavailable')
+            # No tenant live payment routing has been certified.
+            if application.environment != 'test' or not token.startswith('ipb_test_'):
+                raise HTTPException(status_code=403, detail='Tenant live credentials are not enabled')
+            allowed_reads = {
+                ('GET', '/api/v1/developer/events'): 'events:read',
+                ('GET', '/api/v1/developer/webhook-endpoints'): 'webhooks:read',
+            }
+            required = allowed_reads.get(route)
+            if required is None or '*' in scopes or not scopes or required not in scopes:
+                raise HTTPException(status_code=403, detail='Tenant API action is not authorized')
     await _verify_request_signature(request, token, application.id)
     key.last_used_at = datetime.now(timezone.utc)
     db.add(key)
