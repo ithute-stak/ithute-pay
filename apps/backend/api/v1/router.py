@@ -6,7 +6,7 @@ from providers.paypal.routes import ROUTERS as PAYPAL_ROUTERS
 from routers import (
     admin, auth, authorizations, checkout, developer, finance, gateway_admin, golink_callbacks, health,
     loanhub_funding_accounts, loanhub_funding_status, mandates, merchant_network_admin, notifications, operations,
-    payments, platform, portal, provider_catalog, providers, public, tenant_management, ws,
+    payments, platform, portal, provider_catalog, providers, public, tenant_management, tenant_portal, ws,
 )
 
 api_router = APIRouter()
@@ -28,6 +28,8 @@ api_router.include_router(checkout.router)
 api_router.include_router(developer.router)
 api_router.include_router(tenant_management.tenant_router)
 api_router.include_router(tenant_management.admin_router)
+api_router.include_router(tenant_portal.router)
+api_router.include_router(tenant_portal.admin_router)
 api_router.include_router(merchant_network_admin.router)
 api_router.include_router(providers.router)
 api_router.include_router(public.router)
