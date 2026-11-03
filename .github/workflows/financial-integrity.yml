@@ -83,6 +83,19 @@ jobs:
               raise SystemExit("PostgreSQL test session must be enabled")
           print("PostgreSQL financial concurrency suite enabled")
           PY
+      - name: Exercise clean Alembic history on isolated PostgreSQL
+        working-directory: apps/backend
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect(
+              "postgresql://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_financial_test",
+              autocommit=True,
+          ) as connection:
+              connection.execute("CREATE DATABASE ithute_migration_smoke")
+          PY
+          DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \\
+            python scripts/smoke_migrations_postgres.py
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
