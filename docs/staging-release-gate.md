@@ -74,3 +74,38 @@ credential is exposed; or a staging API unexpectedly initiates live transfer.
 migration/backup evidence. Production release separately requires approval,
 maintenance plan, rollback procedure, credential inventory, financial
 reconciliation and post-deploy verification.
+
+
+## Mandatory staging manifest preflight (no side effects)
+
+The preflight at `apps/backend/scripts/staging_preflight.py` validates only
+**non-secret release metadata**. It does not contact the container registry,
+GitHub, PostgreSQL, M-PESA or Golink, and passing does **not** deploy anything.
+
+Prepare a **non-secret JSON** manifest with the pinned image by digest, exact
+source commit, independently verified CI commit, reviewed staging backup and
+migration evidence, and explicitly disabled live-payment, push and automatic
+migration switches. Execute:
+
+```bash
+cd apps/backend
+python scripts/staging_preflight.py /secure/staging-release-manifest.json
+```
+
+The validator fails closed when any required gate is absent or false. In
+particular, set `RUN_MIGRATIONS_ON_START=false` on staging so the combined
+container supervisor does not silently apply schema migrations before the
+backup has been restored and the migration has been reviewed. Existing
+production startup behaviour is **unchanged** by this PR.
+
+**Important:** PR image builds validate that the Dockerfile compiles but do
+not publish a deployable GHCR image. The digest and `image_source_commit`
+must be obtained and checked from a separately approved immutable image
+publication; never invent them. A metadata manifest is not proof of a tested
+backup, registry attestation or actual third-party provider certification.
+Before approving staging deployment, independently check the digest/commit
+mapping and backup evidence. Keep all secrets in the deployment secret store,
+not in the release manifest or GitHub PR.
+
+Even after staging preflight passes, external sandbox certification and
+production change approval remain separate gates.
