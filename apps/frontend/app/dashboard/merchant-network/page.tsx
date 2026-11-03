@@ -11,6 +11,7 @@ import { useAdminMerchantsQuery, useMeQuery } from "@/store/gateway-api";
 type Master = { merchant_id: string; active: boolean; shared_custody_enabled: boolean };
 type Tenant = { id: string; master_merchant_id: string; tenant_merchant_id: string; custody_mode: string; status: string; kyc_status: string };
 type ShortcodeRequest = { id: string; merchant_id: string; shortcode: string; provider: string; environment: string; ownership_status: string; enabled: boolean };
+type Agreement = { id: string; merchant_id: string; version: number; status: string; currency: string; inbound_fixed_fee: string; inbound_percentage_fee: string; outbound_fixed_fee: string; outbound_percentage_fee: string; provider_cost_payer: string };
 type Rates = { version: number; inbound_fixed_fee: string; inbound_percentage_fee: string; outbound_fixed_fee: string; outbound_percentage_fee: string; provider_cost_payer: "tenant" | "ithute" };
 
 const API = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1";
@@ -52,6 +53,7 @@ export default function MerchantNetworkPage() {
   const [master, setMaster] = useState<Master | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [shortcodes, setShortcodes] = useState<ShortcodeRequest[]>([]);
+  const [agreements, setAgreements] = useState<Agreement[]>([]);
   const [masterMerchant, setMasterMerchant] = useState("");
   const [tenantMerchant, setTenantMerchant] = useState("");
   const [custodyMode, setCustodyMode] = useState<"own_shortcode" | "master_shortcode">("own_shortcode");
@@ -64,7 +66,7 @@ export default function MerchantNetworkPage() {
 
   const reload = useCallback(async () => {
     if (!allowed) return;
-    const [masterResult, tenantResult, shortcodeResult] = await Promise.all([
+    const [masterResult, tenantResult, shortcodeResult, agreementResult] = await Promise.all([
       networkRequest<Master>("/admin/merchant-network/master").catch((err: Error) => {
         if (err.message.includes("not configured")) return null;
         throw err;
@@ -74,10 +76,15 @@ export default function MerchantNetworkPage() {
         throw err;
       }),
       networkRequest<ShortcodeRequest[]>("/admin/tenancy/shortcode-requests"),
+      networkRequest<Agreement[]>("/admin/merchant-network/agreements").catch((err: Error) => {
+        if (err.message.includes("not configured")) return [];
+        throw err;
+      }),
     ]);
     setMaster(masterResult);
     setTenants(tenantResult);
     setShortcodes(shortcodeResult);
+    setAgreements(agreementResult);
   }, [allowed]);
 
   useEffect(() => {
@@ -193,6 +200,20 @@ export default function MerchantNetworkPage() {
           </select>
           <Button disabled={busy || !selectedTenant}>Create draft agreement</Button>
           <p className="text-xs text-muted-foreground"><ShieldAlert className="mr-1 inline h-3.5 w-3.5"/>A second administrator must approve fees. Draft rates do not affect live charges.</p>
+          <div className="space-y-2 border-t border-border pt-3">
+            <p className="text-xs font-semibold">Agreement review queue</p>
+            {!agreements.length && <p className="text-xs text-muted-foreground">No agreements yet.</p>}
+            {agreements.map((agreement) => <div key={agreement.id} className="rounded-xl border border-border p-3 text-xs">
+              <p className="font-semibold">{merchantName(agreement.merchant_id)} · Version {agreement.version}</p>
+              <p className="mt-1 text-muted-foreground">Inbound: {agreement.currency} {agreement.inbound_fixed_fee} + {agreement.inbound_percentage_fee}%</p>
+              <p className="text-muted-foreground">Outbound: {agreement.currency} {agreement.outbound_fixed_fee} + {agreement.outbound_percentage_fee}%</p>
+              <div className="mt-2 flex items-center justify-between gap-2">
+                <Status>{agreement.status}</Status>
+                {agreement.status === "draft" && <Button variant="secondary" size="sm" disabled={busy} onClick={() => void run(() => networkRequest(`/admin/merchant-network/agreements/${agreement.id}/approve`, { method: "POST" }), "Agreement approved by separate administrator")}>Approve</Button>}
+              </div>
+            </div>)}
+          </div>
+
         </form>
       </CardContent></Card>
     </div>
