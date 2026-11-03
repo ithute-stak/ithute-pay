@@ -82,3 +82,26 @@ Never run `down -v` until separately approved data destruction is intended.
   real-looking test data.
 - Docker network isolation does not replace host firewall and operator access
   controls.
+
+
+## Read-only post-deployment smoke (after approved deployment)
+
+After the isolated stack is started, run the following on the **staging host**
+from the repository checkout:
+
+```bash
+python apps/backend/scripts/staging_postdeploy_smoke.py
+```
+
+The script connects only to `127.0.0.1:18001` and `127.0.0.1:13001`.
+It verifies `GET /` identifies the running API as **staging**, `GET /health`
+returns a database-backed healthy response, and the frontend root returns
+HTTP 200 HTML. The client never follows redirects, authenticates or sends a
+payment request. It uses no secrets and cannot prove financial transactions,
+authentication or external provider connectivity. A failure is a **NO-GO**
+for staged rollout.
+
+CI runs a separate mock-backed test of the smoke script itself. CI does **not**
+claim to have started the pinned staging image or inspected a real staging
+server. Record the actual output, image digest, environment and backup review
+in the approved release evidence before any deployment decision.
