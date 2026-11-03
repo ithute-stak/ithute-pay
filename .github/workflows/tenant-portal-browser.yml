@@ -1,0 +1,60 @@
+name: IthutePay tenant portal browser checks
+
+on:
+  pull_request:
+    paths:
+      - 'apps/frontend/**'
+      - '.github/workflows/tenant-portal-browser.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/frontend/**'
+      - '.github/workflows/tenant-portal-browser.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tenant-browser-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tenant-portal-browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      CI: 'true'
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_API_BASE: '/api/v1'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Enable pnpm
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
+      - name: Install frontend dependencies
+        working-directory: apps/frontend
+        run: pnpm install --frozen-lockfile=false
+      - name: Typecheck tenant business portal
+        working-directory: apps/frontend
+        run: pnpm typecheck
+      - name: Install Chromium
+        working-directory: apps/frontend
+        run: pnpm exec playwright install --with-deps chromium
+      - name: Execute tenant browser regression suite with mocked APIs
+        working-directory: apps/frontend
+        run: pnpm exec playwright test --config=playwright.tenant.config.ts
+      - name: Upload browser diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-tenant-browser-diagnostics
+          path: |
+            apps/frontend/test-results/
+            apps/frontend/playwright-report/
+          if-no-files-found: ignore
+          retention-days: 7
