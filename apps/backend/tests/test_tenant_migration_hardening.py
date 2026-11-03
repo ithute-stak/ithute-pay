@@ -43,17 +43,26 @@ def test_0013_does_not_precreate_0014_column(monkeypatch):
         assert not inspect(connection).has_table("tenant_reconciliation_push_deliveries")
 
 
-def test_0014_adds_retry_guard_only_after_0013(monkeypatch):
+def test_0014_adds_retry_guard_only_when_missing(monkeypatch):
     migration = _load("0014_tenant_push_manual_retries.py")
     recorded = []
 
+    class FakeInspector:
+        def get_columns(self, table):
+            return [{"name": "id"}]
+        def get_check_constraints(self, table):
+            return []
+
     class RecordingOperations:
+        def get_bind(self):
+            return object()
         def add_column(self, table, column):
             recorded.append(("column", table, column.name, column.nullable))
         def create_check_constraint(self, name, table, condition):
             recorded.append(("constraint", name, table, condition))
 
     monkeypatch.setattr(migration, "op", RecordingOperations())
+    monkeypatch.setattr(migration.sa, "inspect", lambda _: FakeInspector())
     migration.upgrade()
     assert recorded[0] == ("column", "tenant_reconciliation_push_deliveries", "manual_retries", False)
     assert recorded[1][1] == "ck_tenant_recon_push_manual_retries"
