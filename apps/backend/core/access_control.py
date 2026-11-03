@@ -111,6 +111,10 @@ async def get_merchant_context(
     key = db.scalar(select(ApiKey).where(ApiKey.secret_hash == sha256_text(token)))
     if not key or key.revoked_at is not None:
         raise HTTPException(status_code=401, detail='Invalid or revoked API key')
+    if key.expires_at is not None:
+        expiry = key.expires_at.replace(tzinfo=timezone.utc) if key.expires_at.tzinfo is None else key.expires_at
+        if expiry <= datetime.now(timezone.utc):
+            raise HTTPException(status_code=401, detail='API key expired')
     application = db.get(Application, key.application_id)
     if not application or application.status != 'active':
         raise HTTPException(status_code=401, detail='Application inactive')
