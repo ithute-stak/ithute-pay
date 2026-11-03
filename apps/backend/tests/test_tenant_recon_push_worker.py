@@ -133,3 +133,27 @@ def test_stale_worker_cannot_overwrite_reclaimed_lease(monkeypatch):
         assert row.status == "leased"
         assert row.attempts == claim[1] + 1
         assert row.provider_message_id is None
+
+
+def test_exhausted_expired_lease_is_reaped_without_sending(monkeypatch):
+    from datetime import timedelta
+    own, _, _ = _setup(monkeypatch)
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        worker.enqueue_due(db, now)
+        row = db.query(TenantReconciliationPushDelivery).filter(
+            TenantReconciliationPushDelivery.merchant_id == own,
+        ).first()
+        row.status = "leased"
+        row.attempts = worker.MAX_ATTEMPTS
+        row.lease_until = now - timedelta(minutes=1)
+        row_id = row.id
+        db.commit()
+    monkeypatch.setattr(worker, "send_notification", lambda **kwargs: (_ for _ in ()).throw(
+        AssertionError("Exhausted lease must not dispatch")))
+    with SessionLocal() as db:
+        worker.claim_next(db, now)
+        row = db.get(TenantReconciliationPushDelivery, row_id)
+        assert row.status == "failed"
+        assert row.last_error_code == "lease_expired"
+        assert row.lease_until is None
