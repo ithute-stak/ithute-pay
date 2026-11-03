@@ -83,3 +83,25 @@ def test_legacy_non_tenant_merchant_read_still_works(client):
     secret = _seed(tenant=False)
     response = client.get("/api/v1/developer/events", headers=_auth(secret))
     assert response.status_code == 200, response.text
+
+
+def test_expired_legacy_key_is_rejected(client):
+    from datetime import datetime, timedelta, timezone
+    secret = _seed(tenant=False)
+    with SessionLocal() as db:
+        key = db.query(ApiKey).one()
+        key.expires_at = datetime.now(timezone.utc) - timedelta(minutes=1)
+        db.commit()
+    response = client.get("/api/v1/developer/events", headers=_auth(secret))
+    assert response.status_code == 401
+
+
+def test_future_expiration_retains_legacy_compatibility(client):
+    from datetime import datetime, timedelta, timezone
+    secret = _seed(tenant=False)
+    with SessionLocal() as db:
+        key = db.query(ApiKey).one()
+        key.expires_at = datetime.now(timezone.utc) + timedelta(days=1)
+        db.commit()
+    response = client.get("/api/v1/developer/events", headers=_auth(secret))
+    assert response.status_code == 200
