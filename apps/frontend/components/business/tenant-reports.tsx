@@ -30,7 +30,7 @@ async function fetchReport<T>(path: string): Promise<T> {
   return data as T;
 }
 
-export default function TenantReports({ merchantId }: { merchantId: string }) {
+export default function TenantReports({ merchantId, role }: { merchantId: string; role: string }) {
   const [start, setStart] = useState(() => dateBefore(6));
   const [end, setEnd] = useState(() => todayUTC());
   const [kind, setKind] = useState("");
@@ -167,6 +167,6 @@ export default function TenantReports({ merchantId }: { merchantId: string }) {
         </tbody>
       </table>
     </div>
-    <TenantReconciliation merchantId={merchantId} start={start} end={end} />
+    <TenantReconciliation merchantId={merchantId} start={start} end={end} role={role} />
   </section>;
 }
