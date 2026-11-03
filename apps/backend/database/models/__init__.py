@@ -26,6 +26,9 @@ from database.models.tenancy import (
     MerchantCommercialAgreement,
 )
 from database.models.tenant_membership import TenantUserMembership
+from database.models.tenant_reconciliation_exception import (
+    TenantReconciliationException, TenantReconciliationExceptionEvent,
+)
 from database.models.user import User
 from database.models.webhook import Event, WebhookDelivery, WebhookEndpoint
 
@@ -43,4 +46,5 @@ __all__ = [
     'RiskDecision', 'RiskRule', 'SettlementBatch',
     'PlatformMerchantSettings', 'TenantMerchantContract', 'TenantProviderAccount',
     'MerchantCommercialAgreement', 'TenantUserMembership',
+    'TenantReconciliationException', 'TenantReconciliationExceptionEvent',
 ]
