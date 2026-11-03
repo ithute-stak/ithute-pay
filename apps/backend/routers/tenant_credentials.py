@@ -6,7 +6,7 @@ once via authenticated POST and never logged or stored in plaintext.
 """
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
@@ -30,6 +30,7 @@ SAFE_TEST_SCOPES = frozenset({"events:read", "webhooks:read"})
 class TestCredentialCreate(BaseModel):
     name: str = Field(min_length=2, max_length=120)
     scopes: list[str] = Field(min_length=1, max_length=2)
+    validity_days: int = Field(default=30, ge=1, le=90)
 
 
 def _authorized_application(db: Session, user: User, merchant_id: str,
@@ -56,6 +57,7 @@ def _key_info(row: ApiKey) -> dict:
         "id": row.id, "name": row.name, "prefix": row.prefix,
         "last4": row.last4, "scopes": row.scopes or [],
         "revoked": row.revoked_at is not None,
+        "expires_at": row.expires_at.isoformat() if row.expires_at else None,
         "created_at": row.created_at.isoformat() if row.created_at else None,
         "last_used_at": row.last_used_at.isoformat() if row.last_used_at else None,
     }
@@ -89,6 +91,7 @@ def issue_inactive_test_credential(merchant_id: str, application_id: str,
         application_id=app.id, name=payload.name.strip(),
         prefix=secret[:16], last4=secret[-4:],
         secret_hash=sha256_text(secret), scopes=sorted(scopes),
+        expires_at=datetime.now(timezone.utc) + timedelta(days=payload.validity_days),
     )
     db.add(row)
     db.flush()
@@ -125,3 +128,50 @@ def revoke_credential(merchant_id: str, application_id: str, key_id: str,
     )
     db.commit()
     return {"id": key.id, "revoked": True}
+
+
+@router.post("/merchants/{merchant_id}/applications/{application_id}/credentials/{key_id}/rotate",
+             status_code=201)
+def rotate_inactive_test_credential(merchant_id: str, application_id: str,
+                                    key_id: str,
+                                    db: Session = Depends(get_db),
+                                    user: User = Depends(get_current_active_user)):
+    """Replace an inert test credential atomically, revoking its predecessor."""
+    app = _authorized_application(db, user, merchant_id, application_id)
+    if app.environment != "test" or app.status != "inactive":
+        raise HTTPException(status_code=409, detail="Only inactive test applications can rotate credentials")
+    old = db.scalar(select(ApiKey).where(
+        ApiKey.id == key_id, ApiKey.application_id == app.id,
+    ).with_for_update())
+    if old is None:
+        raise HTTPException(status_code=404, detail="Credential not found")
+    now = datetime.now(timezone.utc)
+    if old.revoked_at is not None:
+        raise HTTPException(status_code=409, detail="Credential was already revoked")
+    if old.expires_at is not None:
+        expiry = old.expires_at.replace(tzinfo=timezone.utc) if old.expires_at.tzinfo is None else old.expires_at
+        if expiry <= now:
+            raise HTTPException(status_code=409, detail="Credential has expired")
+    scopes = set(old.scopes or [])
+    if not scopes or "*" in scopes or not scopes.issubset(SAFE_TEST_SCOPES):
+        raise HTTPException(status_code=409, detail="Credential scopes are not eligible for rotation")
+    secret = generate_secret("ipb_test_", 32)
+    replacement = ApiKey(
+        application_id=app.id, name=old.name, prefix=secret[:16],
+        secret_hash=sha256_text(secret), last4=secret[-4:],
+        scopes=sorted(scopes), expires_at=now + timedelta(days=30),
+    )
+    db.add(replacement)
+    db.flush()
+    old.revoked_at = now
+    write_audit(
+        db, actor_type="user", actor_id=user.id,
+        action="tenant_api_key.rotated", resource_type="api_key",
+        resource_id=replacement.id, merchant_id=merchant_id,
+        metadata={"application_id": application_id, "replaced_key_id": old.id},
+    )
+    db.commit()
+    db.refresh(replacement)
+    return {**_key_info(replacement), "secret": secret, "usable": False,
+            "replaced_key_id": old.id,
+            "warning": "The previous key was revoked. Store this inactive test key securely."}
