@@ -62,9 +62,7 @@ export default function TenantReports({ merchantId }: { merchantId: string }) {
     } finally {
       setBusy(false);
     }
-  // Refresh explicitly when date/type filters change to avoid repeated fetches.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [merchantId]);
+  }, [merchantId, start, end, kind]);
 
   useEffect(() => { void refresh(); }, [refresh]);
 
