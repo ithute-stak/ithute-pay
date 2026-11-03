@@ -98,8 +98,9 @@ docker compose -f deploy/staging/compose.yaml exec -T app python \
 The script connects only to `127.0.0.1:8001` and `127.0.0.1:3001`
 *inside the container*.
 It verifies `GET /` identifies the running API as **staging**, `GET /health`
-returns a database-backed healthy response, and the frontend root returns
-HTTP 200 HTML. The client never follows redirects, authenticates or sends a
+returns a database-backed healthy response, and the public frontend sign-in page at `/login` returns
+HTTP 200 HTML. The root path deliberately redirects to `/dashboard` and
+is not a suitable strict 200-only readiness probe. The client never follows redirects, authenticates or sends a
 payment request. It uses no secrets and cannot prove financial transactions,
 authentication or external provider connectivity. A failure is a **NO-GO**
 for staged rollout.
