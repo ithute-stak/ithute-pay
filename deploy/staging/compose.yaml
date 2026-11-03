@@ -1,0 +1,78 @@
+# Isolated staging only. NEVER layer this over production compose.yaml.
+# Required: STAGING_IMAGE=ghcr.io/ithute-stak/ithute-pay@sha256:<verified-digest>
+# Required: STAGING_ENV_FILE=<absolute path to separately controlled secrets>.
+name: ithutepay-staging
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_DB: ithutepay_staging
+      POSTGRES_USER: ithutepay_staging
+      POSTGRES_PASSWORD: ${STAGING_DB_PASSWORD:?Supply a staging-only PostgreSQL password}
+    volumes:
+      - staging_postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ithutepay_staging -d ithutepay_staging"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    networks: [staging_private]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - staging_redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    networks: [staging_private]
+
+  app:
+    image: ${STAGING_IMAGE:?Use an independently verified immutable GHCR digest}
+    env_file:
+      - ${STAGING_ENV_FILE:?Supply the absolute path to staging-only secrets}
+    environment:
+      ENVIRONMENT: staging
+      DEBUG: "false"
+      EXPOSE_ERROR_DETAILS: "false"
+      RUN_MIGRATIONS_ON_START: "false"
+      AUTO_CREATE_PLATFORM_ADMIN: "false"
+      MPESA_ENABLED: "false"
+      MPESA_MODE: simulator
+      MPESA_ENVIRONMENT: sandbox
+      ITHUTE_AUTH_ENABLED: "false"
+      ITHUTE_PUSH_ENABLED: "false"
+      ITHUTE_RECON_PUSH_DISPATCH_ENABLED: "false"
+      GOLINK_COLLECTIONS_ENABLED: "false"
+      GOLINK_RECONCILIATION_ENABLED: "false"
+      SANDBOX_TEST_LAB_ENABLED: "false"
+      REDIS_URL: redis://redis:6379/0
+      DATABASE_URL: postgresql+psycopg://ithutepay_staging:${STAGING_DB_PASSWORD:?Required}@postgres:5432/ithutepay_staging
+      PUBLIC_APP_URL: http://localhost:13001
+      PUBLIC_API_URL: http://localhost:18001
+      PORTAL_APP_URL: http://localhost:13001/portal
+      CORS_ORIGINS: http://localhost:13001
+      TRUSTED_HOSTS: localhost,127.0.0.1
+      AUTH_COOKIE_SECURE: "false"
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "127.0.0.1:18001:8001"
+      - "127.0.0.1:13001:3001"
+    networks: [staging_private]
+    restart: "no"
+
+networks:
+  # Isolated Docker bridge has no external route to either payment provider.
+  staging_private:
+    driver: bridge
+    internal: true
+
+volumes:
+  staging_postgres:
+  staging_redis:
