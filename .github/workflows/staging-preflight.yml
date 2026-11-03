@@ -12,8 +12,10 @@ on:
   push:
     branches: [main]
     paths:
+      - 'deploy/staging/**'
       - 'apps/backend/scripts/staging_preflight.py'
       - 'apps/backend/tests/test_staging_preflight.py'
+      - 'apps/backend/tests/test_staging_compose_contract.py'
       - '.github/workflows/staging-preflight.yml'
   workflow_dispatch:
 
@@ -48,7 +50,7 @@ jobs:
           test "$(docker compose version >/dev/null; echo $?)" -eq 0
           TEMP_ENV="$(mktemp)"
           trap 'rm -f "$TEMP_ENV"' EXIT
-          printf 'SECRET_KEY=offline-dummy-not-a-real-secret-at-least-32-chars\\n' > "$TEMP_ENV"
+          printf '%s\\n' 'SECRET_KEY=offline-dummy-not-a-real-secret-at-least-32-chars' > "$TEMP_ENV"
           export STAGING_IMAGE="ghcr.io/ithute-stak/ithute-pay@sha256:$(printf 'b%.0s' {1..64})"
           export STAGING_ENV_FILE="$TEMP_ENV"
           export STAGING_DB_PASSWORD="offline-ci-placeholder-password"
