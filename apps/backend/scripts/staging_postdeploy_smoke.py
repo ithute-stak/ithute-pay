@@ -22,7 +22,7 @@ def _local_get(port: int, path: str, *, max_bytes: int = 1024 * 1024) -> LocalRe
     """Only connect to loopback and never follow redirects."""
     if type(port) is not int or not (1 <= port <= 65535):
         raise ValueError("Port must be a valid integer")
-    if path not in ("/", "/health"):
+    if path not in ("/", "/health", "/login"):
         raise ValueError("Only approved read-only probe paths are allowed")
     connection = http.client.HTTPConnection("127.0.0.1", port, timeout=5)
     try:
@@ -78,11 +78,11 @@ def verify_staging(api_port: int = 18001, web_port: int = 13001) -> list[str]:
         errors.append("API database health endpoint unavailable or invalid")
 
     try:
-        web = _local_get(web_port, "/")
+        web = _local_get(web_port, "/login")
         if web.status != 200 or "text/html" not in web.content_type.lower():
-            errors.append("Web frontend must return HTTP 200 HTML")
+            errors.append("Web sign-in page must return HTTP 200 HTML")
         elif b"<html" not in web.body.lower():
-            errors.append("Web frontend did not return an HTML document")
+            errors.append("Web sign-in page did not return an HTML document")
     except (OSError, http.client.HTTPException, ValueError):
         errors.append("Web frontend unavailable or invalid")
     return errors
