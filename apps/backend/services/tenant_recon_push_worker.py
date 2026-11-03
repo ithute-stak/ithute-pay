@@ -116,6 +116,13 @@ def enqueue_due(db: Session, now: datetime) -> int:
 
 def claim_next(db: Session, now: datetime):
     """Lease one due outbox item without a network call while holding a lock."""
+    # A worker may die after its last attempt, leaving a leased row forever.
+    # Reap only expired, exhausted leases; do not re-dispatch them.
+    db.execute(update(TenantReconciliationPushDelivery).where(
+        TenantReconciliationPushDelivery.status == "leased",
+        TenantReconciliationPushDelivery.attempts >= MAX_ATTEMPTS,
+        TenantReconciliationPushDelivery.lease_until <= now,
+    ).values(status="failed", lease_until=None, last_error_code="lease_expired"))
     row = db.scalar(select(TenantReconciliationPushDelivery).where(
         or_(
             (TenantReconciliationPushDelivery.status == "pending") &
