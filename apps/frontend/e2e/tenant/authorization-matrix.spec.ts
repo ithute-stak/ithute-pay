@@ -114,5 +114,5 @@ test("anonymous requests cannot retrieve tenant data or submit merchant configur
   const blocked = await page.request.put(url(foreign, "reconciliation/alerts/settings"), {
     data: { overdue_after_days: 7, unassigned_after_days: 2 },
   });
-  expect(blocked.status()).toBe(401);
+  // CSRF middleware can reject an anonymous state-changing request before authentication.\n  expect([401, 403]).toContain(blocked.status());
 });
