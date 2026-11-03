@@ -23,6 +23,9 @@ def _second_admin(client):
         )
         db.add(user)
         db.commit()
+    # Prior admin fixture leaves a browser cookie; clear it before another
+    # cookie-authenticated login so CSRF protection is not bypassed.
+    client.cookies.clear()
     resp = client.post("/api/v1/auth/login", json={
         "email": "network-reviewer@example.com", "password": "Password123!",
     })
@@ -52,6 +55,7 @@ def test_master_and_tenant_enrollment_require_admin_and_safe_defaults(client, ad
     assert client.post("/api/v1/admin/merchant-network/tenants", headers=auth,
                        json={"merchant_id": tenant}).status_code == 409
     assert len(client.get("/api/v1/admin/merchant-network/tenants", headers=auth).json()) == 1
+    client.cookies.clear()
     assert client.get("/api/v1/admin/merchant-network/master").status_code == 401
     with SessionLocal() as db:
         assert db.query(PlatformMerchantSettings).one().shared_custody_enabled is False
