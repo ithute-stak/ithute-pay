@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import TenantCredentials from "@/components/business/tenant-credentials";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Building2, CreditCard, FileText, RefreshCw, ShieldCheck } from "lucide-react";
 
@@ -169,7 +170,7 @@ export default function TenantPortalPage() {
       </header>
       {notice && <div role="status" className="rounded-xl border border-border bg-card p-4 text-sm">{notice}</div>}
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error} <Link className="underline" href="/login">Sign in</Link></div>}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Business owners and managers can request verification of their own shortcode. POS API keys are never exposed in this portal, and master-shortcode payment custody remains disabled.</div>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Business owners and managers can request verification of their own shortcode. Only one-time inactive test credential secrets are shown to authorised owners or developers. Master-shortcode payment custody remains disabled.</div>
       <section className="rounded-2xl border border-border bg-card p-5">
         <label className="mb-2 block text-sm font-bold" htmlFor="tenant-selector">Your approved business</label>
         <select id="tenant-selector" className="h-11 w-full max-w-lg rounded-xl border border-border bg-background px-3 text-sm" value={merchantId} disabled={loading || !tenants.length} onChange={(event) => void selectTenant(event.target.value)}>
@@ -240,6 +241,9 @@ export default function TenantPortalPage() {
                 <button type="button" disabled={appBusy} onClick={() => void disableApplication(app.id)} className="rounded-xl border border-border px-3 py-2 disabled:opacity-50">Disable and revoke keys</button>}
             </div>
           )}</div>
+          <TenantCredentials key={merchantId} merchantId={merchantId}
+            role={tenants.find((t) => t.merchant_id === merchantId)?.role ?? "viewer"}
+            applications={applications} />
           <Link className="mt-3 inline-block text-sm font-semibold underline" href="/documentation">Read the integration documentation</Link>
         </section>
       </div>}
