@@ -20,6 +20,7 @@ on:
       - 'apps/backend/**'
       - 'apps/frontend/**'
       - 'deploy/container/**'
+      - 'deploy/staging/**'
       - '.github/workflows/build-vps-image.yml'
   workflow_dispatch:
 
@@ -112,6 +113,7 @@ jobs:
   build:
     needs: financial-integrity
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - name: Checkout exact source
         uses: actions/checkout@v4
@@ -138,6 +140,7 @@ jobs:
           context: .
           file: ./Dockerfile
           push: ${{ github.event_name != 'pull_request' }}
+          load: ${{ github.event_name == 'pull_request' }}
           tags: ${{ steps.image-tags.outputs.tags }}
           labels: ${{ steps.image-tags.outputs.labels }}
           build-args: |
@@ -148,6 +151,39 @@ jobs:
           sbom: true
           cache-from: type=gha
           cache-to: type=gha,mode=max
+      - name: Boot PR image against isolated staging PostgreSQL and Redis
+        if: github.event_name == 'pull_request'
+        env:
+          STAGING_IMAGE_TAG: ${{ steps.image-tags.outputs.version }}
+          STAGING_DB_PASSWORD: ci_disposable_only_12345
+        run: |
+          set -euo pipefail
+          export STAGING_IMAGE="ghcr.io/ithute-stak/ithute-pay:$STAGING_IMAGE_TAG"
+          docker image inspect "$STAGING_IMAGE" >/dev/null
+          STAGING_ENV_FILE="$(mktemp)"
+          export STAGING_ENV_FILE
+          chmod 600 "$STAGING_ENV_FILE"
+          printf '%s\n' 'SECRET_KEY=ci-disposable-signing-secret-at-least-32-characters' > "$STAGING_ENV_FILE"
+          cleanup() {
+            docker compose -f deploy/staging/compose.yaml down --volumes --remove-orphans || true
+            rm -f "$STAGING_ENV_FILE"
+          }
+          trap cleanup EXIT
+          docker compose -f deploy/staging/compose.yaml config --quiet
+          docker compose -f deploy/staging/compose.yaml up -d postgres redis
+          docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
+            --workdir /app/backend --entrypoint python app -m alembic upgrade head
+          docker compose -f deploy/staging/compose.yaml up -d app
+          for attempt in $(seq 1 36); do
+            if python apps/backend/scripts/staging_postdeploy_smoke.py; then
+              echo "Combined PR image passed isolated staging deployment smoke"
+              exit 0
+            fi
+            sleep 5
+          done
+          docker compose -f deploy/staging/compose.yaml ps
+          docker compose -f deploy/staging/compose.yaml logs --tail=60 app
+          exit 1
       - name: Published image reference
         if: github.event_name != 'pull_request'
         run: |
