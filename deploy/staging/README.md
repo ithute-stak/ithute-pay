@@ -165,3 +165,17 @@ A successful match establishes only the container label and digest mapping;
 it is not independent cryptographic provenance, SBOM attestation verification,
 sandbox provider certification, or a substitute for a manual release review.
 The preflight manifest's backup and staging checks remain separate.
+
+
+The registry verifier now also refuses a locally resolved `RepoDigests`
+mismatch, and, only on success, uploads a non-secret
+`ithutepay-verified-registry-image` evidence artifact containing the
+approved SHA, exact registry reference, local image ID and explicit
+not-deployed/not-certified flags. This is distinct from the **PR rehearsal**
+artifact and must never be substituted for provider certification.
+
+**Workflow availability:** GitHub's `workflow_dispatch` normally requires
+the workflow file to be present on the repository's default branch. While PR
+#8 remains draft and unmerged, this manual verifier may not be dispatchable.
+Do not merge or publish merely to make it dispatchable; obtain approval for
+the release process first.
