@@ -48,7 +48,7 @@ test("real FastAPI and PostgreSQL: switching tenants enforces roles and protecte
   await expect(page.getByText("Reconciliation alert inbox")).toBeVisible();
   await expect(page.getByText("Save alert preferences")).toBeVisible();
   await page.getByLabel("Your approved business").selectOption(beta.merchant_id);
-  await expect(page.getByText("Beta Integration Merchant", { exact: true }).first()).toBeVisible();
+  await expect(page.getByText("Merchant: integration-beta")).toBeVisible();
   await expect(page.getByText("Save alert preferences")).toHaveCount(0);
   await expect(page.getByText("Request one retry")).toHaveCount(0);
 
