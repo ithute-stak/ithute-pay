@@ -116,7 +116,10 @@ in the approved release evidence before any deployment decision.
 The `Build IthutePay VPS image` workflow now loads the **locally built PR
 image**, compiles its partner API base as `/api/v1` instead of the production
 partner endpoint, creates only disposable CI PostgreSQL/Redis volumes, runs
-Alembic explicitly and exercises the read-only post-deployment smoke test
+Alembic explicitly, verifies that the effective database revision matches
+Alembic head, checks the running container's disabled payment and background
+job switches (including the absence of Celery processes), and exercises the
+read-only post-deployment smoke test
 against the actual FastAPI/Next.js container. The private Docker bridge blocks
 container egress to payment providers. The CI job removes its disposable
 volumes and secrets on exit.
