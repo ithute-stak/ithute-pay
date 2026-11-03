@@ -369,11 +369,43 @@ async def execute_payout(db: Session, payout: Payout) -> Payout:
 
 
 async def execute_transfer(db: Session, transfer: Transfer) -> Transfer:
-    provider=get_provider(transfer.provider,db=db,application_id=transfer.application_id); require_provider_capability(provider,"transfer")
-    tx=create_provider_transaction(db,resource_type="transfer",resource=transfer,direction="outbound")
-    transfer.status="processing"; db.add(transfer); db.commit()
-    result=await provider.transfer(amount=transfer.amount,currency=transfer.currency,receiver_party_code=transfer.receiver_party_code,transaction_reference=tx.transaction_reference,third_party_conversation_id=tx.third_party_conversation_id,description=transfer.description or transfer.reference)
-    apply_provider_result(db,transaction=tx,result=result); db.commit(); db.refresh(transfer); return transfer
+    # Commit an atomic claim with the provider correlation IDs before network I/O.
+    # A replay (including an unknown outcome) must never issue another transfer.
+    provider = get_provider(transfer.provider, db=db, application_id=transfer.application_id)
+    require_provider_capability(provider, "transfer")
+    claimed = db.execute(
+        update(Transfer)
+        .where(Transfer.id == transfer.id, Transfer.status == "created")
+        .values(status="processing")
+        .execution_options(synchronize_session="fetch")
+    ).rowcount
+    if claimed != 1:
+        db.rollback()
+        db.refresh(transfer)
+        return transfer
+    tx = create_provider_transaction(db, resource_type="transfer", resource=transfer, direction="outbound")
+    db.commit()
+    try:
+        result = await provider.transfer(
+            amount=transfer.amount, currency=transfer.currency,
+            receiver_party_code=transfer.receiver_party_code,
+            transaction_reference=tx.transaction_reference,
+            third_party_conversation_id=tx.third_party_conversation_id,
+            description=transfer.description or transfer.reference,
+        )
+    except (httpx.TimeoutException, httpx.TransportError):
+        # Network failure cannot prove that the provider did not move funds.
+        transfer.status = "unknown"
+        tx.status = "unknown"
+        db.add(transfer)
+        db.add(tx)
+        db.commit()
+        db.refresh(transfer)
+        return transfer
+    apply_provider_result(db, transaction=tx, result=result)
+    db.commit()
+    db.refresh(transfer)
+    return transfer
 
 
 async def refresh_provider_transaction(db: Session, transaction: ProviderTransaction) -> ProviderTransaction:
