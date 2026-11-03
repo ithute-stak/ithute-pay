@@ -92,7 +92,7 @@ jobs:
           pnpm exec playwright install --with-deps chromium
       - name: Browser-to-backend-to-PostgreSQL isolation checks
         working-directory: apps/frontend
-        run: pnpm exec playwright test --config=playwright.tenant.config.ts e2e/tenant/live-backend.spec.ts
+        run: pnpm exec playwright test --config=playwright.tenant.config.ts e2e/tenant/live-backend.spec.ts e2e/tenant/authorization-matrix.spec.ts
       - name: Upload failure diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
