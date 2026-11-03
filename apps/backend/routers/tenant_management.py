@@ -13,7 +13,8 @@ from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from core.access_control import MerchantContext, merchant_context, platform_admin
+from core.access_control import MerchantContext, merchant_context
+from routers.merchant_network_admin import _network_admin
 from database.models import (
     MerchantCommercialAgreement, TenantMerchantContract, TenantProviderAccount, User,
 )
@@ -132,7 +133,7 @@ def tenant_agreement(
 
 @admin_router.get("/shortcode-requests")
 def pending_shortcodes(
-    db: Session = Depends(get_db), _: User = Depends(platform_admin),
+    db: Session = Depends(get_db), _: User = Depends(_network_admin),
 ):
     rows = db.scalars(select(TenantProviderAccount).where(
         TenantProviderAccount.ownership_status == "pending",
@@ -143,7 +144,7 @@ def pending_shortcodes(
 @admin_router.post("/shortcodes/{account_id}/verify")
 def verify_shortcode(
     account_id: str, payload: ShortcodeVerification,
-    db: Session = Depends(get_db), user: User = Depends(platform_admin),
+    db: Session = Depends(get_db), user: User = Depends(_network_admin),
 ):
     row = db.scalar(select(TenantProviderAccount).where(
         TenantProviderAccount.id == account_id,
