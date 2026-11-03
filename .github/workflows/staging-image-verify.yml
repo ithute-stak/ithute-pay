@@ -100,7 +100,7 @@ jobs:
           }
           path = Path("image-verification-evidence/registry-verification.json")
           path.parent.mkdir(exist_ok=True)
-          path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\\n")
+          path.write_text(json.dumps(evidence, indent=2, sort_keys=True))
           print("Non-secret registry verification evidence recorded")
           PY
           echo "READ-ONLY REGISTRY VERIFICATION PASSED"
