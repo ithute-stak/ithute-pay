@@ -40,6 +40,7 @@ services:
       DEBUG: "false"
       EXPOSE_ERROR_DETAILS: "false"
       RUN_MIGRATIONS_ON_START: "false"
+      RUN_BACKGROUND_JOBS: "false"
       AUTO_CREATE_PLATFORM_ADMIN: "false"
       MPESA_ENABLED: "false"
       MPESA_MODE: simulator
@@ -61,9 +62,8 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       redis: { condition: service_healthy }
-    ports:
-      - "127.0.0.1:18001:8001"
-      - "127.0.0.1:13001:3001"
+    # Offline rehearsal: no host ports or public-facing staging listeners.
+    # Use docker compose exec and run the localhost smoke inside the app.
     networks: [staging_private]
     restart: "no"
 
