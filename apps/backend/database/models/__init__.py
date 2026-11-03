@@ -26,6 +26,7 @@ from database.models.tenancy import (
     MerchantCommercialAgreement,
 )
 from database.models.tenant_membership import TenantUserMembership
+from database.models.tenant_reconciliation_push import TenantReconciliationPushDelivery
 from database.models.tenant_reconciliation_alert import (
     TenantReconciliationAlertPolicy, TenantReconciliationAlertAcknowledgement,
 )
@@ -51,4 +52,5 @@ __all__ = [
     'MerchantCommercialAgreement', 'TenantUserMembership',
     'TenantReconciliationException', 'TenantReconciliationExceptionEvent',
     'TenantReconciliationAlertPolicy', 'TenantReconciliationAlertAcknowledgement',
+    'TenantReconciliationPushDelivery',
 ]
