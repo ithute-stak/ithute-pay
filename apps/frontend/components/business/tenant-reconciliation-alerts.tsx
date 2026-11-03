@@ -11,6 +11,7 @@ type Alert = {
   classification: string; investigation_status: string;
   assigned_user_id: string | null; acknowledged: boolean; created_at: string;
 };
+type DeliveryStatus = { delivery_enabled: boolean; channel: string; scope: string; statuses: Record<string, number>; delivery_note: string };
 type Inbox = {
   unacknowledged_count: number; alerts: Alert[]; display_limit: number;
   delivery: string; disclaimer: string;
@@ -43,6 +44,7 @@ export default function TenantReconciliationAlerts({ merchantId, role }: {
   const prefix = `/tenant-portal/merchants/${encodeURIComponent(merchantId)}/reconciliation/alerts`;
   const [policy, setPolicy] = useState<Policy>(DEFAULT_POLICY);
   const [inbox, setInbox] = useState<Inbox | null>(null);
+  const [delivery, setDelivery] = useState<DeliveryStatus | null>(null);
   const [includeAcknowledged, setIncludeAcknowledged] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -51,14 +53,17 @@ export default function TenantReconciliationAlerts({ merchantId, role }: {
   const refresh = useCallback(async () => {
     setError("");
     try {
-      const [settings, alerts] = await Promise.all([
+      const [settings, alerts, pushStatus] = await Promise.all([
         api<Policy>(prefix + "/settings"),
         api<Inbox>(prefix + `?include_acknowledged=${includeAcknowledged}`),
+        api<DeliveryStatus>(prefix + "/delivery-status"),
       ]);
       setPolicy(settings);
       setInbox(alerts);
+      setDelivery(pushStatus);
     } catch (err) {
       setInbox(null);
+      setDelivery(null);
       setError(err instanceof Error ? err.message : "Unable to load reconciliation alerts");
     }
   }, [prefix, includeAcknowledged]);
@@ -125,6 +130,11 @@ export default function TenantReconciliationAlerts({ merchantId, role }: {
         Save alert preferences
       </button>
     </form>}
+    {delivery && <div className="mt-3 rounded-xl border border-border p-3 text-sm">
+      <p className="font-semibold">!thute Push delivery: {delivery.delivery_enabled ? "Configured (operator-run worker)" : "Disabled"}</p>
+      <p className="mt-1 text-muted-foreground">Your notifications — delivered: {delivery.statuses.delivered ?? 0}, pending: {delivery.statuses.pending ?? 0}, failed: {delivery.statuses.failed ?? 0}</p>
+      <p className="mt-1 text-xs text-muted-foreground">{delivery.delivery_note}</p>
+    </div>}
     <div className="mt-4 flex flex-wrap items-center gap-3">
       <p className="text-sm font-semibold">Unacknowledged alerts: {inbox?.unacknowledged_count ?? "—"}</p>
       <label className="flex items-center gap-2 text-sm">
