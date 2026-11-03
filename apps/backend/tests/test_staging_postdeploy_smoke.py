@@ -20,7 +20,7 @@ def healthy(path, port):
         }).encode())
     if port == 18001 and path == "/health":
         return reply(200, "application/json", b'{"status":"healthy"}')
-    if port == 13001 and path == "/":
+    if port == 13001 and path == "/login":
         return reply(200, "text/html; charset=utf-8", b"<!doctype html><html><body>Staging</body></html>")
     raise AssertionError("unexpected probe")
 
