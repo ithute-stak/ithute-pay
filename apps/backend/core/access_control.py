@@ -14,6 +14,7 @@ from sqlalchemy.orm import Session
 from core.security import get_current_user
 from database.config.config import settings
 from database.models.merchant import ApiKey, Application, Merchant
+from database.models.tenancy import TenantMerchantContract
 from database.models.user import User
 from database.session import get_db
 from services.security_service import sha256_text
@@ -116,6 +117,27 @@ async def get_merchant_context(
     merchant = db.get(Merchant, application.merchant_id)
     if not merchant or merchant.status != 'active':
         raise HTTPException(status_code=401, detail='Merchant inactive')
+    # Tenant API credentials have a separate fail-closed policy. Legacy
+    # merchant applications without a tenant contract retain existing behavior.
+    tenant = db.scalar(select(TenantMerchantContract).where(
+        TenantMerchantContract.tenant_merchant_id == merchant.id,
+    ))
+    if tenant is not None:
+        if (tenant.status != 'approved' or tenant.kyc_status != 'verified'
+                or tenant.custody_mode != 'own_shortcode'):
+            raise HTTPException(status_code=403, detail='Tenant processing is unavailable')
+        # No tenant live payment routing has been certified. Application
+        # activation elsewhere must never bypass these route-level gates.
+        if application.environment != 'test' or not token.startswith('ipb_test_'):
+            raise HTTPException(status_code=403, detail='Tenant live credentials are not enabled')
+        allowed_reads = {
+            ('GET', '/api/v1/developer/events'): 'events:read',
+            ('GET', '/api/v1/developer/webhook-endpoints'): 'webhooks:read',
+        }
+        required = allowed_reads.get((request.method.upper(), request.url.path))
+        scopes = set(key.scopes or [])
+        if required is None or '*' in scopes or not scopes or required not in scopes:
+            raise HTTPException(status_code=403, detail='Tenant API action is not authorized')
     await _verify_request_signature(request, token, application.id)
     key.last_used_at = datetime.now(timezone.utc)
     db.add(key)
