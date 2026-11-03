@@ -43,6 +43,8 @@ class TenantMerchantContract(Base, TimestampMixin):
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
     kyc_status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending")
+    requested_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
+    approved_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     effective_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
 
@@ -104,6 +106,7 @@ class MerchantCommercialAgreement(Base, TimestampMixin):
         ForeignKey("merchants.id"), nullable=False, index=True,
     )
     version: Mapped[int] = mapped_column(Integer, nullable=False)
+    proposed_by: Mapped[str | None] = mapped_column(String(36), nullable=True)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="draft")
     currency: Mapped[str] = mapped_column(String(3), nullable=False, default="LSL")
     inbound_fixed_fee: Mapped[Decimal] = mapped_column(
