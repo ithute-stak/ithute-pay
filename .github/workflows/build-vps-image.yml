@@ -186,6 +186,63 @@ jobs:
           docker compose -f deploy/staging/compose.yaml ps
           docker compose -f deploy/staging/compose.yaml logs --tail=60 app
           exit 1
+      - name: Record offline PR rehearsal evidence
+        if: github.event_name == 'pull_request'
+        env:
+          STAGING_IMAGE_TAG: ${{ steps.image-tags.outputs.version }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          mkdir -p staging-evidence
+          python - <<'PY'
+          import json
+          import os
+          import re
+          import subprocess
+          from pathlib import Path
+
+          # Rehearsal succeeds only if the previous step completed.
+          checkout = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+          image_tag = os.environ["STAGING_IMAGE_TAG"]
+          image_ref = "ghcr.io/ithute-stak/ithute-pay:" + image_tag
+          image_id = subprocess.check_output(
+              ["docker", "image", "inspect", image_ref, "--format", "{{.Id}}"],
+              text=True,
+          ).strip()
+          assert re.fullmatch(r"[0-9a-f]{40}", checkout)
+          assert re.fullmatch(r"[0-9a-f]{40}", os.environ["PR_HEAD_SHA"])
+          assert re.fullmatch(r"sha-[0-9a-f]{40}", image_tag)
+          assert re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
+          evidence = {
+              "kind": "ithutepay_offline_pr_container_rehearsal",
+              "result": "passed",
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "tested_checkout_sha": checkout,
+              "pr_head_sha": os.environ["PR_HEAD_SHA"],
+              "local_image_reference": image_ref,
+              "local_image_id": image_id,
+              "migration": "explicit_alembic_upgrade_head_passed",
+              "api_health": "passed",
+              "web_login_html": "passed",
+              "payment_provider_live_calls": "disabled",
+              "background_workers": "disabled",
+              "registry_image_published": False,
+              "external_sandbox_certified": False,
+              "operator_staging_deployment": False,
+          }
+          output = Path("staging-evidence/rehearsal.json")
+          output.write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
+          print("Recorded non-secret, local-image rehearsal evidence")
+          PY
+      - name: Upload offline staging rehearsal evidence
+        if: github.event_name == 'pull_request'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-pr-staging-rehearsal
+          path: staging-evidence/rehearsal.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Published image reference
         if: github.event_name != 'pull_request'
         run: |
