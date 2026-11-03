@@ -68,6 +68,48 @@ jobs:
             echo "NO-GO: invalid local image ID"
             exit 1
           }
+          # Confirm Docker resolved the exact registry digest requested.
+          export IMAGE COMMIT_SHA IMAGE_DIGEST
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          image = os.environ["IMAGE"]
+          inspected = json.loads(subprocess.check_output(
+              ["docker", "image", "inspect", image], text=True,
+          ))
+          assert len(inspected) == 1, "NO-GO: ambiguous image"
+          details = inspected[0]
+          assert image in details.get("RepoDigests", []), "NO-GO: wrong registry digest"
+          assert details.get("Config", {}).get("Labels", {}).get(
+              "org.opencontainers.image.revision",
+          ) == os.environ["COMMIT_SHA"], "NO-GO: wrong source revision"
+          evidence = {
+              "kind": "ithutepay_read_only_ghcr_image_verification",
+              "result": "passed",
+              "approved_commit": os.environ["COMMIT_SHA"],
+              "verified_registry_reference": image,
+              "local_image_id": details["Id"],
+              "registry_image_published": True,
+              "container_executed": False,
+              "staging_deployed": False,
+              "external_provider_certified": False,
+              "cryptographic_provenance_attestation_verified": False,
+          }
+          path = Path("image-verification-evidence/registry-verification.json")
+          path.parent.mkdir(exist_ok=True)
+          path.write_text(json.dumps(evidence, indent=2, sort_keys=True) + "\\n")
+          print("Non-secret registry verification evidence recorded")
+          PY
           echo "READ-ONLY REGISTRY VERIFICATION PASSED"
           echo "A digest and image revision label match is not cryptographic SLSA attestation verification."
           echo "No registry publication, container execution, migration or deployment occurred."
+      - name: Upload non-secret registry verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-verified-registry-image
+          path: image-verification-evidence/registry-verification.json
+          if-no-files-found: error
+          retention-days: 30
