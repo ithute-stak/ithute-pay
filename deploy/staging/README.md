@@ -49,17 +49,9 @@ restored, sanitised snapshot, start only database and Redis:
 docker compose -f deploy/staging/compose.yaml up -d postgres redis
 ```
 
-Run migrations **explicitly** after review, using the image, compose network,
-and *only* the staging database:
-
-```bash
-docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
-  --entrypoint python app -m alembic -c /app/backend/alembic.ini upgrade head
-```
-
-**Important:** the image's working directory is `/app`, whereas its Alembic
-configuration expects the backend directory. For the actual migration command,
-use a working-directory override as below instead of the generic example above:
+Run migrations **explicitly** after review, using the image, Compose
+network and *only* the staging database. The migration process must run
+from `/app/backend` where the Alembic configuration lives:
 
 ```bash
 docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
