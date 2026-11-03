@@ -172,7 +172,8 @@ jobs:
           }
           trap cleanup EXIT
           docker compose -f deploy/staging/compose.yaml config --quiet
-          docker compose -f deploy/staging/compose.yaml up -d postgres redis
+          # Do not race initial PostgreSQL cluster creation and Redis startup.
+          docker compose -f deploy/staging/compose.yaml up -d --wait --wait-timeout 120 postgres redis
           docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
             --workdir /app/backend --entrypoint python app -m alembic upgrade head
           docker compose -f deploy/staging/compose.yaml up -d app
