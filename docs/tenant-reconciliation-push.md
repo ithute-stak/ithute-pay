@@ -62,3 +62,38 @@ infer delivery solely from `enqueued`.
 To immediately stop sends, set `ITHUTE_RECON_PUSH_DISPATCH_ENABLED=false` on
 the worker service and stop its scheduler. Existing pending outbox records are
 retained for audit and potential future re-enablement.
+
+
+## Phase 18 — delivery monitoring and controlled retries
+
+The portal now provides recipient-scoped delivery monitoring. Active tenant
+owners and managers can inspect delivery statuses for their business, while
+other members can inspect only their own delivery records. The API never
+returns recipient Auth subjects, provider credentials or provider payloads.
+
+The monitoring API is
+`GET /api/v1/tenant-portal/merchants/{merchant_id}/reconciliation/alerts/deliveries`
+with optional `status` and `limit` query parameters.
+
+An active owner or manager may queue a **single** manual retry only after a
+delivery has reached `failed` and exhausted all five automatic attempts:
+
+`POST /api/v1/tenant-portal/merchants/{merchant_id}/reconciliation/alerts/deliveries/{delivery_id}/retry`
+
+The retry requires the central push integration and reconciliation dispatcher
+to be enabled; it is rejected for closed cases, unknown or foreign delivery
+records, non-failed deliveries and records already manually retried. The retry
+increments a separately constrained `manual_retries` counter and resets the
+attempt counter only once. The worker then rechecks current recipient status,
+tenant approval, alert policy, assignment, acknowledgement and case status
+before delivery. The same provider idempotency key is reused.
+
+Apply the new **`0014_tenant_push_manual_retries`** migration after 0013 and
+**before** deploying the Phase 18 backend. Production sending remains OFF by
+default. Manual retry requests merely queue work; they do not send a push from
+the web request.
+
+Operational caveat: a provider must honor idempotency keys to suppress
+duplicates after an ambiguous network acknowledgement. Monitoring reports
+local queued/accepted states and must not be interpreted as device delivery
+receipts without independent provider confirmation.
