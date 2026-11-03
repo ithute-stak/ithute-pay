@@ -16,6 +16,9 @@ depends_on = None
 
 
 def upgrade() -> None:
+    if sa.inspect(op.get_bind()).has_table("tenant_reconciliation_push_deliveries"):
+        # The bootstrap migration can create current metadata on a clean DB.
+        return
     op.create_table(
         "tenant_reconciliation_push_deliveries",
         sa.Column("id", sa.String(36), primary_key=True),
