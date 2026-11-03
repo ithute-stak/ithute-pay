@@ -24,6 +24,7 @@ class PlatformMerchantSettings(Base, TimestampMixin):
     merchant_id: Mapped[str] = mapped_column(
         ForeignKey("merchants.id"), unique=True, nullable=False, index=True,
     )
+    singleton_key: Mapped[int] = mapped_column(Integer, nullable=False, unique=True, default=1)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
     shared_custody_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
 
