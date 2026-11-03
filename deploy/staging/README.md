@@ -146,3 +146,22 @@ deployment as **false**. Operators must independently verify the later
 published image digest, build provenance, migration/restore evidence and
 provider certification before approving any actual staging or production
 release.
+
+
+## Read-only GHCR digest-to-source verification (manual)
+
+After a separately authorised build publishes a **real** GHCR image, an
+operator may dispatch `.github/workflows/staging-image-verify.yml` with the
+exact approved `commit_sha` (40 lowercase hex digits) and published
+`image_digest` (`sha256:` followed by 64 lowercase hex digits).
+
+The workflow checks out the exact commit, pulls the image by immutable
+digest, and compares the OCI `org.opencontainers.image.revision` label to
+the approved commit. It does **not** execute the image, run migrations,
+initiate transactions, publish an image or deploy to a VPS. The image must
+already exist and the GitHub token must have read access to its package.
+
+A successful match establishes only the container label and digest mapping;
+it is not independent cryptographic provenance, SBOM attestation verification,
+sandbox provider certification, or a substitute for a manual release review.
+The preflight manifest's backup and staging checks remain separate.
