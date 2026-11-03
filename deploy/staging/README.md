@@ -1,0 +1,92 @@
+# Isolated IthutePay staging stack
+
+This is a **non-production, no-provider-egress** Compose stack. Do not combine
+`deploy/staging/compose.yaml` with the production `compose.yaml`, do not
+mount production volumes, and do not deploy it to the production network.
+
+## Preconditions
+
+1. All required CI checks are green for the **exact** source SHA. PR image
+   builds are not published; obtain a separately approved image from GHCR,
+   inspect its provenance and source SHA, and pin the **real registry digest**.
+2. Create a staging-only secret file **outside the repository** with mode
+   0600. Use fresh database and app signing/encryption secrets, not production
+   credentials. Set `STAGING_ENV_FILE` to its absolute path. Do not commit,
+   log, email or attach that file.
+3. Provide a staging-only PostgreSQL password through the operator's shell or
+   secrets manager. Avoid URL-reserved characters in this Compose variant,
+   because the password is injected into a PostgreSQL connection URL. In
+   production prefer secret mounts or structured connection settings.
+4. Complete the separate non-secret release manifest check:
+   `python apps/backend/scripts/staging_preflight.py /path/to/manifest.json`.
+   The manifest requires backup and migration review evidence as explicit
+   operator gates; CI cannot assert those on the operator's behalf.
+
+## Review the intended stack (does not start it)
+
+```bash
+export STAGING_IMAGE='ghcr.io/ithute-stak/ithute-pay@sha256:<verified-image-digest>'
+export STAGING_ENV_FILE='/absolute/path/to/staging-only.env'
+# Set STAGING_DB_PASSWORD securely in the operator environment.
+docker compose -f deploy/staging/compose.yaml config --quiet
+```
+
+The complete stack uses an isolated project and newly created volumes named
+under `ithutepay-staging`. It has no shared production networks or containers.
+The only exposed ports bind to the host loopback: API `127.0.0.1:18001`
+and web `127.0.0.1:13001`. The Docker bridge is marked `internal: true`;
+container-to-Internet payment provider calls cannot reach external addresses.
+
+## Migration and start (only after change approval)
+
+The application supervisor normally runs Alembic automatically, but staging
+explicitly overrides `RUN_MIGRATIONS_ON_START=false`.
+
+On an authorised test host with a clean staging database or a separately
+restored, sanitised snapshot, start only database and Redis:
+
+```bash
+docker compose -f deploy/staging/compose.yaml up -d postgres redis
+```
+
+Run migrations **explicitly** after review, using the image, compose network,
+and *only* the staging database:
+
+```bash
+docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
+  --entrypoint python app -m alembic -c /app/backend/alembic.ini upgrade head
+```
+
+**Important:** the image's working directory is `/app`, whereas its Alembic
+configuration expects the backend directory. For the actual migration command,
+use a working-directory override as below instead of the generic example above:
+
+```bash
+docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
+  --workdir /app/backend --entrypoint python app -m alembic upgrade head
+```
+
+Start the combined staging app only after migrations succeed:
+
+```bash
+docker compose -f deploy/staging/compose.yaml up -d app
+curl --fail http://127.0.0.1:18001/health
+```
+
+Never pass the staging Compose project name to a production Docker command.
+Never run `down -v` until separately approved data destruction is intended.
+
+## Safety limitations
+
+- CI validates Compose structure and interpolation, but does not deploy an
+  image or prove a GHCR registry digest exists.
+- Staging is intentionally offline. External provider sandbox certification
+  requires a **separate** approved environment, controlled credentials and
+  recorded transaction/callback evidence.
+- Loopback-only staging cannot be reached from another workstation without an
+  independently approved tunnel; do not expose these ports publicly.
+- The combined application image also starts background processes. Review its
+  Celery schedules and disable unexpected external integrations before using
+  real-looking test data.
+- Docker network isolation does not replace host firewall and operator access
+  controls.
