@@ -105,3 +105,19 @@ CI runs a separate mock-backed test of the smoke script itself. CI does **not**
 claim to have started the pinned staging image or inspected a real staging
 server. Record the actual output, image digest, environment and backup review
 in the approved release evidence before any deployment decision.
+
+
+## Automated candidate-image rehearsal in pull requests
+
+The `Build IthutePay VPS image` workflow now loads the **locally built PR
+image**, compiles its partner API base as `/api/v1` instead of the production
+partner endpoint, creates only disposable CI PostgreSQL/Redis volumes, runs
+Alembic explicitly and exercises the read-only post-deployment smoke test
+against the actual FastAPI/Next.js container. The private Docker bridge blocks
+container egress to payment providers. The CI job removes its disposable
+volumes and secrets on exit.
+
+This rehearsal uses a temporary **local SHA-tagged candidate**, not a
+published/verified GHCR digest. It does not deploy to a VPS, cannot certify
+third-party sandboxes, and cannot substitute for the independent
+digest/provenance check or the separate operator-approved staging deployment.
