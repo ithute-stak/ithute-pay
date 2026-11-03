@@ -13,8 +13,12 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("api_keys", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))
+    existing = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("api_keys")}
+    if "expires_at" not in existing:
+        op.add_column("api_keys", sa.Column("expires_at", sa.DateTime(timezone=True), nullable=True))
 
 
 def downgrade() -> None:
-    op.drop_column("api_keys", "expires_at")
+    existing = {column["name"] for column in sa.inspect(op.get_bind()).get_columns("api_keys")}
+    if "expires_at" in existing:
+        op.drop_column("api_keys", "expires_at")
