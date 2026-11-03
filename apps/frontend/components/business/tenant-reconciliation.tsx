@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import TenantReconciliationCase from "@/components/business/tenant-reconciliation-case";
 
 type ReconItem = {
   id: string; reconciliation_date: string; provider: string; status: string;
@@ -10,8 +11,8 @@ type ReconItem = {
 };
 const API = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1";
 
-export default function TenantReconciliation({ merchantId, start, end }: {
-  merchantId: string; start: string; end: string;
+export default function TenantReconciliation({ merchantId, start, end, role }: {
+  merchantId: string; start: string; end: string; role: string;
 }) {
   const [items, setItems] = useState<ReconItem[]>([]);
   const [status, setStatus] = useState("");
@@ -114,6 +115,7 @@ export default function TenantReconciliation({ merchantId, start, end }: {
       <p className="break-all">Gateway transaction: {selected.gateway_transaction_id || "Not linked or not merchant-owned"}</p>
       <p>Gateway status: {selected.gateway_status || "Unavailable"}</p>
       <p className="mt-2 text-muted-foreground">This view is read-only and does not validate external provider records in real time.</p>
+      <TenantReconciliationCase merchantId={merchantId} itemId={selected.id} role={role} onClose={() => setSelected(null)} />
     </div>}
   </div>;
 }
