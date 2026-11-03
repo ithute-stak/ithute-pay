@@ -27,6 +27,7 @@ class TenantReconciliationPushDelivery(Base, TimestampMixin):
     alert_type: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(20), nullable=False, default="pending", index=True)
     attempts: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    manual_retries: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     next_attempt_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     lease_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     delivered_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
@@ -41,4 +42,5 @@ class TenantReconciliationPushDelivery(Base, TimestampMixin):
         CheckConstraint("alert_type IN ('overdue','unassigned','escalated')",
                         name="ck_tenant_recon_push_delivery_type"),
         CheckConstraint("attempts >= 0", name="ck_tenant_recon_push_attempts"),
+        CheckConstraint("manual_retries BETWEEN 0 AND 1", name="ck_tenant_recon_push_manual_retries"),
     )
