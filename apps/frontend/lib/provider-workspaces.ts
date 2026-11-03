@@ -124,6 +124,7 @@ export const PROVIDER_WORKSPACES: ProviderWorkspace[] = [
 
 export const PLATFORM_NAV = [
   { href: "/dashboard/merchants", label: "Merchants", description: "Businesses and organizations using Pay Bridge.", icon: Building2 },
+  { href: "/dashboard/merchant-network", label: "Merchant network", description: "Ithute master, tenant approvals, shortcodes and agreed fees.", icon: Network },
   { href: "/dashboard/routing", label: "Client routing", description: "Map external identifiers and settlement destinations to merchants.", icon: Route },
   { href: "/dashboard/applications", label: "Applications & keys", description: "API applications, environments and credentials.", icon: KeyRound },
   { href: "/dashboard/providers", label: "Provider setup", description: "Configure, activate and monitor payment providers.", icon: Cable },
