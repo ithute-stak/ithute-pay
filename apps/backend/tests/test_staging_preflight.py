@@ -27,6 +27,7 @@ def safe_manifest():
             "ENVIRONMENT": "staging",
             "DEBUG": "false",
             "RUN_MIGRATIONS_ON_START": "false",
+            "RUN_BACKGROUND_JOBS": "false",
             "MPESA_ENABLED": "false",
             "MPESA_MODE": "simulator",
             "MPESA_ENVIRONMENT": "sandbox",
