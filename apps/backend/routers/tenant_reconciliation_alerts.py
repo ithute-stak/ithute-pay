@@ -9,14 +9,15 @@ from datetime import datetime, timezone
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from core.access_control import get_current_active_user
 from database.models import (
     TenantReconciliationAlertAcknowledgement, TenantReconciliationAlertPolicy,
-    TenantReconciliationException, TenantUserMembership, User,
+    TenantReconciliationException, TenantReconciliationPushDelivery,
+    TenantUserMembership, User,
 )
 from database.session import get_db
 from routers.tenant_portal import _allowed_tenant
@@ -197,3 +198,35 @@ def acknowledge_alert(merchant_id: str, case_id: str, alert_type: str,
     )
     db.commit()
     return {"case_id": case_id, "alert_type": alert_type, "acknowledged": True}
+
+
+@router.get("/merchants/{merchant_id}/reconciliation/alerts/delivery-status")
+def my_push_delivery_status(
+    merchant_id: str,
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Scoped delivery counters; never expose recipient subjects or service tokens."""
+    _member_role(db, user, merchant_id)
+    from database.config.config import settings
+    rows = db.execute(select(
+        TenantReconciliationPushDelivery.status,
+        func.count(TenantReconciliationPushDelivery.id),
+    ).where(
+        TenantReconciliationPushDelivery.merchant_id == merchant_id,
+        TenantReconciliationPushDelivery.recipient_user_id == user.id,
+    ).group_by(TenantReconciliationPushDelivery.status)).all()
+    return {
+        "delivery_enabled": bool(
+            settings.ITHUTE_RECON_PUSH_DISPATCH_ENABLED
+            and settings.ITHUTE_PUSH_ENABLED
+            and settings.ITHUTE_PUSH_SERVICE_CLIENT_SECRET
+        ),
+        "channel": "ithute_push",
+        "scope": "current_user",
+        "statuses": {status: count for status, count in rows},
+        "delivery_note": (
+            "The separate background worker must be scheduled by the operator; "
+            "enabling settings alone does not start delivery."
+        ),
+    }
