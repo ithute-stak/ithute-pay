@@ -104,3 +104,32 @@ def test_case_closed_before_dispatch_is_cancelled(monkeypatch):
         AssertionError("Closed case must not trigger push")))
     with SessionLocal() as db:
         assert worker.dispatch_one(db, *claim, now) == "cancelled"
+
+
+def test_stale_worker_cannot_overwrite_reclaimed_lease(monkeypatch):
+    """A delayed successful response must not clobber a later worker attempt."""
+    from datetime import timedelta
+    own, _, _ = _setup(monkeypatch)
+    now = datetime.now(timezone.utc)
+    with SessionLocal() as db:
+        worker.enqueue_due(db, now)
+        claim = worker.claim_next(db, now)
+    assert claim is not None
+
+    def delayed_send(**kwargs):
+        with SessionLocal() as other:
+            row = other.get(TenantReconciliationPushDelivery, claim[0])
+            row.attempts = claim[1] + 1
+            row.status = "leased"
+            row.lease_until = now + timedelta(minutes=3)
+            other.commit()
+        return {"id": "accepted-previous-attempt"}
+
+    monkeypatch.setattr(worker, "send_notification", delayed_send)
+    with SessionLocal() as db:
+        assert worker.dispatch_one(db, *claim, now) == "skipped"
+    with SessionLocal() as db:
+        row = db.get(TenantReconciliationPushDelivery, claim[0])
+        assert row.status == "leased"
+        assert row.attempts == claim[1] + 1
+        assert row.provider_message_id is None
