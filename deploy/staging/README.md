@@ -125,3 +125,21 @@ This rehearsal uses a temporary **local SHA-tagged candidate**, not a
 published/verified GHCR digest. It does not deploy to a VPS, cannot certify
 third-party sandboxes, and cannot substitute for the independent
 digest/provenance check or the separate operator-approved staging deployment.
+
+
+## Auditable CI rehearsal evidence
+
+After a successful PR container rehearsal, the VPS image workflow uploads
+`ithutepay-pr-staging-rehearsal/rehearsal.json` as a GitHub Actions artifact.
+The non-secret report contains the actual checked-out commit, PR head SHA,
+local Docker image ID, workflow run ID and explicitly scoped test results.
+It is generated **only after** the container smoke test passes, and the
+artifact upload must also succeed for the build job to pass.
+
+The Docker image ID in the report is a **local image ID**, not a registry
+digest or production deployment artifact. The report explicitly marks
+registry publication, external provider certification and an operator staging
+deployment as **false**. Operators must independently verify the later
+published image digest, build provenance, migration/restore evidence and
+provider certification before approving any actual staging or production
+release.
