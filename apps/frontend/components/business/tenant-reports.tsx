@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useState } from "react";
+import TenantReconciliation from "@/components/business/tenant-reconciliation";
 
 type Transaction = {
   id: string; type: string; reference: string; provider: string;
@@ -166,5 +167,6 @@ export default function TenantReports({ merchantId }: { merchantId: string }) {
         </tbody>
       </table>
     </div>
+    <TenantReconciliation merchantId={merchantId} start={start} end={end} />
   </section>;
 }
