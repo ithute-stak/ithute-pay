@@ -31,10 +31,7 @@ def test_staging_network_disallows_external_provider_contact():
     assert not any("network_mode" in service for service in doc["services"].values())
     assert "ports" not in doc["services"]["postgres"]
     assert "ports" not in doc["services"]["redis"]
-    assert doc["services"]["app"]["ports"] == [
-        "127.0.0.1:18001:8001",
-        "127.0.0.1:13001:3001",
-    ]
+    assert "ports" not in doc["services"]["app"]
 
 
 def test_staging_cannot_inherit_enabled_payment_or_auto_migration():
@@ -48,6 +45,7 @@ def test_staging_cannot_inherit_enabled_payment_or_auto_migration():
         "GOLINK_COLLECTIONS_ENABLED",
         "GOLINK_RECONCILIATION_ENABLED",
         "RUN_MIGRATIONS_ON_START",
+        "RUN_BACKGROUND_JOBS",
         "AUTO_CREATE_PLATFORM_ADMIN",
         "SANDBOX_TEST_LAB_ENABLED",
     ):
