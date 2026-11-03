@@ -49,7 +49,7 @@ def validate_manifest(manifest: Mapping[str, object]) -> list[str]:
     if not isinstance(switches, dict):
         switches = {}
     required_false = (
-        "RUN_MIGRATIONS_ON_START", "MPESA_ENABLED", "ITHUTE_PUSH_ENABLED",
+        "RUN_MIGRATIONS_ON_START", "RUN_BACKGROUND_JOBS", "MPESA_ENABLED", "ITHUTE_PUSH_ENABLED",
         "ITHUTE_RECON_PUSH_DISPATCH_ENABLED", "GOLINK_RECONCILIATION_ENABLED",
         "AUTO_CREATE_PLATFORM_ADMIN",
     )
