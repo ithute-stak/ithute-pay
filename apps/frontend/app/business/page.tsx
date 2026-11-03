@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import TenantCredentials from "@/components/business/tenant-credentials";
+import TenantReports from "@/components/business/tenant-reports";
 import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Building2, CreditCard, FileText, RefreshCw, ShieldCheck } from "lucide-react";
 
@@ -219,6 +220,7 @@ export default function TenantPortalPage() {
             <div className="rounded-xl bg-muted/50 p-4"><p className="text-xs text-muted-foreground">Agreement</p><p className="mt-1 font-semibold">Version {overview.agreement.version}</p><p className="text-xs">Provider charges: {overview.agreement.provider_cost_payer}</p></div>
           </div>}
         </section>
+        <TenantReports key={`report-${merchantId}`} merchantId={merchantId} />
         <section className="rounded-2xl border border-border bg-card p-5 md:col-span-2">
           <h2 className="mb-2 flex items-center gap-2 text-lg font-bold"><CreditCard className="h-5 w-5"/>POS integration</h2>
           <p className="text-sm text-muted-foreground">Register a POS application for your business. New applications are inactive and have no API keys. Separate credential and activation approval is required before processing payments.</p>
