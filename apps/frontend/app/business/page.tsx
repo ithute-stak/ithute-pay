@@ -49,6 +49,54 @@ export default function TenantPortalPage() {
   const [environment, setEnvironment] = useState<"sandbox" | "production">("production");
   const [submitting, setSubmitting] = useState(false);
   const [notice, setNotice] = useState("");
+  const [applications, setApplications] = useState<Array<{id: string; name: string; environment: string; status: string}>>([]);
+  const [appName, setAppName] = useState("");
+  const [appEnvironment, setAppEnvironment] = useState<"test" | "live">("test");
+  const [appBusy, setAppBusy] = useState(false);
+
+  async function refreshApplications(id: string) {
+    const rows = await read<Array<{id: string; name: string; environment: string; status: string}>>(
+      `/tenant-portal/merchants/${encodeURIComponent(id)}/applications`);
+    setApplications(rows);
+  }
+
+  async function createApplication(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!merchantId || appName.trim().length < 2) return;
+    setAppBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${API}/tenant-portal/merchants/${encodeURIComponent(merchantId)}/applications`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ name: appName.trim(), environment: appEnvironment }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Unable to register POS.");
+      setAppName("");
+      setNotice("POS application registered as inactive. Payment credentials are not issued.");
+      await refreshApplications(merchantId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to register POS.");
+    } finally { setAppBusy(false); }
+  }
+
+  async function disableApplication(applicationId: string) {
+    if (!merchantId) return;
+    setAppBusy(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${API}/tenant-portal/merchants/${encodeURIComponent(merchantId)}/applications/${encodeURIComponent(applicationId)}/disable`, {
+        method: "POST", credentials: "include",
+        headers: csrfHeaders(),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Unable to disable POS.");
+      setNotice("POS application disabled and active credentials revoked.");
+      await refreshApplications(merchantId);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Unable to disable POS.");
+    } finally { setAppBusy(false); }
+  }
+
 
   async function submitShortcode(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -83,6 +131,7 @@ export default function TenantPortalPage() {
       const id = list.some((t) => t.merchant_id === merchantId) ? merchantId : list[0]?.merchant_id;
       setMerchantId(id ?? "");
       setOverview(id ? await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`) : null);
+      if (id) await refreshApplications(id); else setApplications([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load merchant data");
       setOverview(null);
@@ -97,7 +146,11 @@ export default function TenantPortalPage() {
     setMerchantId(id);
     setError("");
     setLoading(true);
-    try { setOverview(await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`)); }
+    try {
+      setApplications([]);
+      setOverview(await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`));
+      await refreshApplications(id);
+    }
     catch (err) { setOverview(null); setError(err instanceof Error ? err.message : "Could not open merchant"); }
     finally { setLoading(false); }
   }
@@ -167,7 +220,26 @@ export default function TenantPortalPage() {
         </section>
         <section className="rounded-2xl border border-border bg-card p-5 md:col-span-2">
           <h2 className="mb-2 flex items-center gap-2 text-lg font-bold"><CreditCard className="h-5 w-5"/>POS integration</h2>
-          <p className="text-sm text-muted-foreground">Your POS will use an application-scoped IthutePay API key issued through a secure developer workflow. Keys and master M-PESA credentials are never displayed on this read-only business page.</p>
+          <p className="text-sm text-muted-foreground">Register a POS application for your business. New applications are inactive and have no API keys. Separate credential and activation approval is required before processing payments.</p>
+          {tenants.some((t) => t.merchant_id === merchantId && ["owner", "manager", "developer"].includes(t.role)) && overview.contract.custody_mode === "own_shortcode" &&
+            <form onSubmit={(event) => void createApplication(event)} className="mt-4 grid gap-3 sm:grid-cols-3">
+              <label className="text-sm font-semibold">Application name
+                <input className="mt-1 h-11 w-full rounded-xl border border-border bg-background px-3" required minLength={2} maxLength={120} value={appName} onChange={(event) => setAppName(event.target.value)} placeholder="Shop POS 01" />
+              </label>
+              <label className="text-sm font-semibold">Environment
+                <select className="mt-1 h-11 w-full rounded-xl border border-border bg-background px-3" value={appEnvironment} onChange={(event) => setAppEnvironment(event.target.value as "test" | "live")}>
+                  <option value="test">Test</option><option value="live">Live (inactive)</option>
+                </select>
+              </label>
+              <button disabled={appBusy} className="self-end rounded-xl border border-border px-4 py-3 text-sm font-semibold disabled:opacity-50" type="submit">Register POS</button>
+            </form>}
+          <div className="mt-4 space-y-2">{applications.map((app) =>
+            <div key={app.id} className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-border p-3 text-sm">
+              <div><p className="font-semibold">{app.name}</p><p className="text-muted-foreground">{app.environment} · {app.status}</p></div>
+              {app.status === "active" && tenants.some((t) => t.merchant_id === merchantId && ["owner", "manager", "developer"].includes(t.role)) &&
+                <button type="button" disabled={appBusy} onClick={() => void disableApplication(app.id)} className="rounded-xl border border-border px-3 py-2 disabled:opacity-50">Disable and revoke keys</button>}
+            </div>
+          )}</div>
           <Link className="mt-3 inline-block text-sm font-semibold underline" href="/documentation">Read the integration documentation</Link>
         </section>
       </div>}
