@@ -42,12 +42,12 @@ with SessionLocal() as db:
             custody_mode="own_shortcode", status="approved", kyc_status="verified",
         ))
     owner = User(
-        email="integration-owner@example.invalid",
+        email="integration-owner@example.com",
         password_hash=hash_password("BrowserIntegrationOnly-123!"),
         full_name="Integration Owner", role="merchant_user",
     )
     viewer = User(
-        email="integration-viewer@example.invalid",
+        email="integration-viewer@example.com",
         password_hash=hash_password("BrowserIntegrationOnly-123!"),
         full_name="Integration Viewer", role="merchant_user",
     )
