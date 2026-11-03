@@ -146,7 +146,7 @@ jobs:
           build-args: |
             BACKEND_INTERNAL_URL=http://127.0.0.1:8001
             NEXT_PUBLIC_API_BASE=/api/v1
-            NEXT_PUBLIC_PARTNER_API_BASE=https://api.pay.ithute.co.ls/api/v1
+            NEXT_PUBLIC_PARTNER_API_BASE=${{ github.event_name == 'pull_request' && '/api/v1' || 'https://api.pay.ithute.co.ls/api/v1' }}
           provenance: true
           sbom: true
           cache-from: type=gha
