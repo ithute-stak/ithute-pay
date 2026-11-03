@@ -3,7 +3,7 @@
 import Link from "next/link";
 import TenantCredentials from "@/components/business/tenant-credentials";
 import TenantReports from "@/components/business/tenant-reports";
-import { FormEvent, useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useRef, useState } from "react";
 import { Building2, CreditCard, FileText, RefreshCw, ShieldCheck } from "lucide-react";
 
 type Tenant = {
@@ -44,6 +44,9 @@ async function read<T>(path: string): Promise<T> {
 export default function TenantPortalPage() {
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [merchantId, setMerchantId] = useState("");
+  // A stable selection ref prevents the initial load effect from rerunning
+  // whenever a user switches merchants (and racing with the selected tenant).
+  const selectedMerchantId = useRef("");
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
@@ -59,7 +62,7 @@ export default function TenantPortalPage() {
   async function refreshApplications(id: string) {
     const rows = await read<Array<{id: string; name: string; environment: string; status: string}>>(
       `/tenant-portal/merchants/${encodeURIComponent(id)}/applications`);
-    setApplications(rows);
+    if (selectedMerchantId.current === id) setApplications(rows);
   }
 
   async function createApplication(event: FormEvent<HTMLFormElement>) {
@@ -130,9 +133,13 @@ export default function TenantPortalPage() {
     try {
       const list = await read<Tenant[]>("/tenant-portal/merchants");
       setTenants(list);
-      const id = list.some((t) => t.merchant_id === merchantId) ? merchantId : list[0]?.merchant_id;
+      const previous = selectedMerchantId.current;
+      const id = list.some((t) => t.merchant_id === previous) ? previous : list[0]?.merchant_id;
+      selectedMerchantId.current = id ?? "";
       setMerchantId(id ?? "");
-      setOverview(id ? await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`) : null);
+      const account = id ? await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`) : null;
+      if (selectedMerchantId.current !== (id ?? "")) return;
+      setOverview(account);
       if (id) await refreshApplications(id); else setApplications([]);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load merchant data");
@@ -140,21 +147,32 @@ export default function TenantPortalPage() {
     } finally {
       setLoading(false);
     }
-  }, [merchantId]);
+  }, []);
 
   useEffect(() => { void load(); }, [load]);
 
   async function selectTenant(id: string) {
+    // Clear all previous tenant data *before* new merchant data loads.
+    // In particular, never display previous tenant's role-bound controls.
+    selectedMerchantId.current = id;
     setMerchantId(id);
+    setOverview(null);
+    setApplications([]);
     setError("");
     setLoading(true);
     try {
-      setApplications([]);
-      setOverview(await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`));
+      const account = await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(id)}/overview`);
+      if (selectedMerchantId.current !== id) return;
+      setOverview(account);
       await refreshApplications(id);
+    } catch (err) {
+      if (selectedMerchantId.current === id) {
+        setOverview(null);
+        setError(err instanceof Error ? err.message : "Could not open merchant");
+      }
+    } finally {
+      if (selectedMerchantId.current === id) setLoading(false);
     }
-    catch (err) { setOverview(null); setError(err instanceof Error ? err.message : "Could not open merchant"); }
-    finally { setLoading(false); }
   }
 
   return <main className="min-h-screen bg-background p-4 text-foreground md:p-8">
