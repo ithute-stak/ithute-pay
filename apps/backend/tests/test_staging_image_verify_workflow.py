@@ -22,6 +22,11 @@ def test_registry_verify_must_be_no_execute_no_deploy():
     assert "git rev-parse HEAD" in content
     assert "docker pull" in content
     assert "docker image inspect" in content
+    assert "RepoDigests" in content
+    assert "actions/upload-artifact@v4" in content
+    assert "ithutepay-verified-registry-image" in content
+    assert "\"container_executed\": False" in content
+    assert "\"staging_deployed\": False" in content
     for command in (
         "docker run ", "docker compose up", "docker push ",
         "docker build ", "kubectl apply", "ssh ", "scp ",
