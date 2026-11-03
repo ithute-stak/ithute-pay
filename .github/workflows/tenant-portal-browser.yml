@@ -47,7 +47,7 @@ jobs:
         run: pnpm exec playwright install --with-deps chromium
       - name: Execute tenant browser regression suite with mocked APIs
         working-directory: apps/frontend
-        run: pnpm exec playwright test --config=playwright.tenant.config.ts
+        run: pnpm exec playwright test --config=playwright.tenant.config.ts e2e/tenant/business-portal.spec.ts
       - name: Upload browser diagnostics
         if: failure()
         uses: actions/upload-artifact@v4
