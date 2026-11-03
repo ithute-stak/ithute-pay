@@ -25,7 +25,7 @@ async function login(page: Page, email: string) {
 }
 
 test("real FastAPI and PostgreSQL: switching tenants enforces roles and protected foreign tenant", async ({ page }) => {
-  await login(page, "integration-owner@example.invalid");
+  await login(page, "integration-owner@example.com");
   await liveApiProxy(page);
   const memberships = await page.request.get(backend + "/api/v1/tenant-portal/merchants");
   expect(memberships.status()).toBe(200);
@@ -57,7 +57,7 @@ test("real FastAPI and PostgreSQL: switching tenants enforces roles and protecte
 });
 
 test("real FastAPI and PostgreSQL: viewer has no tenant configuration write access", async ({ page }) => {
-  await login(page, "integration-viewer@example.invalid");
+  await login(page, "integration-viewer@example.com");
   await liveApiProxy(page);
   await page.goto("/business");
   await expect(page.getByText("Beta Integration Merchant", { exact: true }).first()).toBeVisible();
