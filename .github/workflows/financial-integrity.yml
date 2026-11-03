@@ -94,6 +94,7 @@ jobs:
             tests/test_master_tenant_foundation.py \
             tests/test_tenant_management_api.py \
             tests/test_merchant_network_admin.py \
+            tests/test_tenant_portal_access.py \
             tests/test_merchant_payout_dispatch_claim.py \
             tests/test_collection_dispatch_claim.py \
             tests/test_reconciliation_terminal_state.py \
