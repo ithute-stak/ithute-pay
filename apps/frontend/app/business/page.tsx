@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useCallback, useEffect, useState } from "react";
+import { FormEvent, useCallback, useEffect, useState } from "react";
 import { Building2, CreditCard, FileText, RefreshCw, ShieldCheck } from "lucide-react";
 
 type Tenant = {
@@ -24,6 +24,13 @@ type Overview = {
 
 const API = process.env.NEXT_PUBLIC_API_BASE ?? "/api/v1";
 
+function csrfHeaders(): Record<string, string> {
+  if (typeof document === "undefined") return {};
+  const raw = document.cookie.split(";").map((p) => p.trim()).find((p) => p.startsWith("ipb_csrf="));
+  return raw ? { "X-CSRF-Token": decodeURIComponent(raw.slice("ipb_csrf=".length)) } : {};
+}
+
+
 async function read<T>(path: string): Promise<T> {
   const response = await fetch(`${API}${path}`, { credentials: "include", cache: "no-store" });
   if (response.status === 401) throw new Error("Please sign in to IthutePay.");
@@ -38,6 +45,34 @@ export default function TenantPortalPage() {
   const [overview, setOverview] = useState<Overview | null>(null);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [shortcode, setShortcode] = useState("");
+  const [environment, setEnvironment] = useState<"sandbox" | "production">("production");
+  const [submitting, setSubmitting] = useState(false);
+  const [notice, setNotice] = useState("");
+
+  async function submitShortcode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!merchantId || !/^[0-9]{4,12}$/.test(shortcode)) {
+      setError("Shortcode must contain 4 to 12 digits.");
+      return;
+    }
+    setSubmitting(true); setError(""); setNotice("");
+    try {
+      const response = await fetch(`${API}/tenant-portal/merchants/${encodeURIComponent(merchantId)}/shortcode-requests`, {
+        method: "POST", credentials: "include",
+        headers: { "Content-Type": "application/json", ...csrfHeaders() },
+        body: JSON.stringify({ provider: "mpesa", environment, shortcode }),
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok) throw new Error(typeof payload.detail === "string" ? payload.detail : "Could not submit shortcode.");
+      setNotice("Shortcode request submitted for Ithute verification. Routing remains disabled.");
+      setShortcode("");
+      setOverview(await read<Overview>(`/tenant-portal/merchants/${encodeURIComponent(merchantId)}/overview`));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not submit shortcode.");
+    } finally { setSubmitting(false); }
+  }
+
 
   const load = useCallback(async () => {
     setLoading(true);
@@ -79,8 +114,9 @@ export default function TenantPortalPage() {
         <div className="flex gap-2"><Link className="rounded-xl border px-4 py-2 text-sm font-semibold" href="/dashboard">Platform dashboard</Link>
           <button className="rounded-xl border px-4 py-2 text-sm font-semibold" onClick={() => void load()}><RefreshCw className="mr-2 inline h-4 w-4" />Refresh</button></div>
       </header>
+      {notice && <div role="status" className="rounded-xl border border-border bg-card p-4 text-sm">{notice}</div>}
       {error && <div role="alert" className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-800">{error} <Link className="underline" href="/login">Sign in</Link></div>}
-      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Business access is read-only in this phase. POS API keys are never exposed in this portal, and master-shortcode payment custody remains disabled.</div>
+      <div className="rounded-xl border border-amber-200 bg-amber-50 p-4 text-sm text-amber-950">Business owners and managers can request verification of their own shortcode. POS API keys are never exposed in this portal, and master-shortcode payment custody remains disabled.</div>
       <section className="rounded-2xl border border-border bg-card p-5">
         <label className="mb-2 block text-sm font-bold" htmlFor="tenant-selector">Your approved business</label>
         <select id="tenant-selector" className="h-11 w-full max-w-lg rounded-xl border border-border bg-background px-3 text-sm" value={merchantId} disabled={loading || !tenants.length} onChange={(event) => void selectTenant(event.target.value)}>
@@ -100,6 +136,22 @@ export default function TenantPortalPage() {
         <section className="rounded-2xl border border-border bg-card p-5">
           <h2 className="mb-3 flex items-center gap-2 text-lg font-bold"><ShieldCheck className="h-5 w-5"/>M-PESA shortcode</h2>
           {!overview.shortcodes.length && <p className="text-sm text-muted-foreground">No shortcode request has been submitted yet.</p>}
+          {tenants.find((t) => t.merchant_id === merchantId && (t.role === "owner" || t.role === "manager")) && overview.contract.custody_mode === "own_shortcode" &&
+            <form className="mb-4 flex flex-col gap-2" onSubmit={(event) => void submitShortcode(event)}>
+              <label className="text-sm font-semibold" htmlFor="shortcode-input">Request shortcode verification</label>
+              <input id="shortcode-input" value={shortcode} onChange={(event) => setShortcode(event.target.value)}
+                inputMode="numeric" pattern="[0-9]{4,12}" minLength={4} maxLength={12} required
+                placeholder="4–12 digit shortcode" className="h-11 rounded-xl border border-border bg-background px-3" />
+              <label className="text-sm font-semibold" htmlFor="shortcode-environment">Environment</label>
+              <select id="shortcode-environment" value={environment}
+                onChange={(event) => setEnvironment(event.target.value as "sandbox" | "production")}
+                className="h-11 rounded-xl border border-border bg-background px-3">
+                <option value="production">Production</option><option value="sandbox">Sandbox</option>
+              </select>
+              <button type="submit" disabled={submitting} className="rounded-xl border border-border px-4 py-2 text-sm font-semibold disabled:opacity-50">
+                {submitting ? "Submitting…" : "Submit for verification"}
+              </button>
+            </form>}
           {overview.shortcodes.map((s) => <div key={s.id} className="mb-2 rounded-xl border border-border p-3 text-sm">
             <p className="font-semibold">{s.shortcode} · {s.provider.toUpperCase()}</p>
             <p className="text-muted-foreground">{s.environment} · {s.ownership_status} · routing {s.enabled ? "enabled" : "disabled"}</p>
