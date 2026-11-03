@@ -7,6 +7,8 @@ on:
       - 'apps/backend/scripts/staging_preflight.py'
       - 'apps/backend/tests/test_staging_preflight.py'
       - 'apps/backend/tests/test_staging_compose_contract.py'
+      - 'apps/backend/scripts/staging_postdeploy_smoke.py'
+      - 'apps/backend/tests/test_staging_postdeploy_smoke.py'
       - 'docs/staging-release-gate.md'
       - '.github/workflows/staging-preflight.yml'
   push:
@@ -16,6 +18,8 @@ on:
       - 'apps/backend/scripts/staging_preflight.py'
       - 'apps/backend/tests/test_staging_preflight.py'
       - 'apps/backend/tests/test_staging_compose_contract.py'
+      - 'apps/backend/scripts/staging_postdeploy_smoke.py'
+      - 'apps/backend/tests/test_staging_postdeploy_smoke.py'
       - '.github/workflows/staging-preflight.yml'
   workflow_dispatch:
 
@@ -35,7 +39,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install pytest PyYAML
-          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py
+          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py tests/test_staging_postdeploy_smoke.py
       - name: Refuse missing release evidence
         working-directory: apps/backend
         run: |
