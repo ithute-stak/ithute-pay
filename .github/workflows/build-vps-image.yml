@@ -147,8 +147,10 @@ jobs:
             BACKEND_INTERNAL_URL=http://127.0.0.1:8001
             NEXT_PUBLIC_API_BASE=/api/v1
             NEXT_PUBLIC_PARTNER_API_BASE=${{ github.event_name == 'pull_request' && '/api/v1' || 'https://api.pay.ithute.co.ls/api/v1' }}
-          provenance: true
-          sbom: true
+          # Docker local --load cannot export a multi-manifest attestation index.
+          # Keep attestations enabled for registry-published images only.
+          provenance: ${{ github.event_name != 'pull_request' }}
+          sbom: ${{ github.event_name != 'pull_request' }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
       - name: Boot PR image against isolated staging PostgreSQL and Redis
