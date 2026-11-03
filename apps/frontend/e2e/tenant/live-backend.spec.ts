@@ -3,6 +3,12 @@ import { expect, test, type Page } from "@playwright/test";
 const backend = "http://localhost:8001";
 const password = "BrowserIntegrationOnly-123!";
 
+test.afterEach(async ({ page }) => {
+  // Tenant UI issues concurrent read requests. Do not let a teardown dispose
+  // an in-flight proxied APIResponse before its route is fulfilled.
+  await page.unrouteAll({ behavior: "ignoreErrors" });
+});
+
 async function liveApiProxy(page: Page) {
   // The frontend uses /api/v1 at the same origin in deployed nginx.
   // CI has no nginx: forward requests directly to the running FastAPI service.
