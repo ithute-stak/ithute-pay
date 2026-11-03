@@ -177,7 +177,7 @@ jobs:
             --workdir /app/backend --entrypoint python app -m alembic upgrade head
           docker compose -f deploy/staging/compose.yaml up -d app
           for attempt in $(seq 1 36); do
-            if python apps/backend/scripts/staging_postdeploy_smoke.py; then
+            if docker compose -f deploy/staging/compose.yaml exec -T app python /app/backend/scripts/staging_postdeploy_smoke.py --api-port 8001 --web-port 3001; then
               echo "Combined PR image passed isolated staging deployment smoke"
               exit 0
             fi
