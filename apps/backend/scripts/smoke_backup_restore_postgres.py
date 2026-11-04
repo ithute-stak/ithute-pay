@@ -248,6 +248,6 @@ if evidence_path:
     }
     path = Path(evidence_path)
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\\n", encoding="utf-8")
+    path.write_text(json.dumps(report, sort_keys=True, indent=2), encoding="utf-8")
 
 print("Disposable PostgreSQL archive integrity, synthetic financial fingerprint, tenant/status totals, duplicate-prevention, amount constraints and migration: PASS")
