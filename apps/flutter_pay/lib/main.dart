@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'widgets/backend_status_card.dart';
 
 void main() => runApp(const IthutePayApp());
 
@@ -163,6 +164,8 @@ class _HomeContent extends StatelessWidget {
             ],
           ),
         ),
+        const SizedBox(height: 16),
+        const BackendStatusCard(),
         const SizedBox(height: 26),
         const Text('Payment services',
             style: TextStyle(fontSize: 20, fontWeight: FontWeight.bold, color: _navy)),
