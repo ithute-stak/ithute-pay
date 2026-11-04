@@ -129,13 +129,21 @@ export IPB_IMAGE="$NEW_ID"
 compose config --quiet
 
 # Alembic version check on the candidate image; no application process is started.
-if ! compose run --rm --no-deps --no-build --pull never \
+if ! compose run --rm --no-deps --pull never \
   --workdir /app/backend --entrypoint python "$SERVICE" -m alembic current --check; then
   if [[ "${PAY_APPROVE_MIGRATIONS:-no}" != yes ]]; then
-    echo "Schema differs from candidate Alembic head. STOP: review expand-only migrations," >&2
-    echo "then explicitly approve with PAY_APPROVE_MIGRATIONS=yes pull pay latest." >&2
+    echo "Candidate Alembic check did not pass. This may be a schema difference or a check error." >&2
+    echo "STOP: investigate the candidate and review migrations before approving." >&2
     exit 1
   fi
+  # Prove the command and database connection work before treating --check failure
+  # as evidence of unapplied migrations. A CLI/connection error must never
+  # trigger approved migration execution.
+  compose run --rm --no-deps --pull never \
+    --workdir /app/backend --entrypoint python "$SERVICE" -m alembic current || {
+      echo "Alembic current itself failed; refusing migrations (CLI or DB error)" >&2
+      exit 1
+    }
   BACKUP_DIR="${PAY_BACKUP_DIR:-/var/backups/ithutepay}"
   mkdir -p "$BACKUP_DIR"
   BACKUP="$BACKUP_DIR/ithutepay-$(date -u +%Y%m%dT%H%M%SZ).dump"
@@ -143,9 +151,9 @@ if ! compose run --rm --no-deps --no-build --pull never \
   compose exec -T postgres sh -ec 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BACKUP"
   [[ -s "$BACKUP" ]] || { echo "Empty backup; stopping" >&2; exit 1; }
   # No automatic downgrade: migrations must be backward compatible with old image.
-  compose run --rm --no-deps --no-build --pull never \
+  compose run --rm --no-deps --pull never \
     --workdir /app/backend --entrypoint python "$SERVICE" -m alembic upgrade head
-  compose run --rm --no-deps --no-build --pull never \
+  compose run --rm --no-deps --pull never \
     --workdir /app/backend --entrypoint python "$SERVICE" -m alembic current --check
 fi
 
