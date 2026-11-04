@@ -1,0 +1,32 @@
+name: Validate one-command pay release helper
+on:
+  pull_request:
+    paths:
+      - 'deploy/vps/pull-pay-latest'
+      - 'deploy/vps/PULL_PAY_LATEST.md'
+      - '.github/workflows/pull-pay-script-tests.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/vps/pull-pay-latest'
+      - '.github/workflows/pull-pay-script-tests.yml'
+permissions:
+  contents: read
+jobs:
+  release-script-static:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check bash syntax
+        run: bash -n deploy/vps/pull-pay-latest
+      - name: ShellCheck
+        run: shellcheck -s bash deploy/vps/pull-pay-latest
+      - name: Assert isolation and safety invariants
+        run: |
+          set -euo pipefail
+          script=deploy/vps/pull-pay-latest
+          grep -Fq 'docker pull ghcr.io/ithute-stak/ithute-pay:latest' "$script"
+          grep -Fq 'pg_dump' "$script"
+          grep -Fq 'alembic upgrade head' "$script"
+          grep -Fq -- '--no-deps --no-build --force-recreate ithute-pay-bridge' "$script"
+          ! grep -Eq 'docker compose down|down --volumes|git pull|pg_restore' "$script"
