@@ -55,7 +55,7 @@ ARGS+=(-f "$OVERRIDE")
 # Locate the currently running service using immutable Compose labels before
 # evaluating its YAML. compose.vps.yaml requires IPB_IMAGE to be defined.
 PROJECT="${PAY_COMPOSE_PROJECT:-ithute-pay}"
-mapfile -t EXISTING_CONTAINERS < <(docker ps -aq \
+mapfile -t EXISTING_CONTAINERS < <(docker ps --no-trunc -aq \
   --filter "label=com.docker.compose.project=$PROJECT" \
   --filter "label=com.docker.compose.service=$SERVICE")
 [[ ${#EXISTING_CONTAINERS[@]} -eq 1 ]] || {
@@ -74,8 +74,14 @@ YAML
 export IPB_IMAGE="$OLD_IMAGE_ID"
 compose config --quiet
 RESOLVED_CONTAINER="$(compose ps -aq "$SERVICE")"
-[[ "$RESOLVED_CONTAINER" == "$OLD_CONTAINER" ]] || {
+[[ -n "$RESOLVED_CONTAINER" ]] || { echo "Compose service not found in effective model" >&2; exit 1; }
+# Docker CLI defaults to 12-character IDs unless --no-trunc is used;
+# normalize both references through inspect before enforcing identity.
+OLD_CANONICAL_ID="$(docker inspect "$OLD_CONTAINER" --format '{{.Id}}')"
+RESOLVED_CANONICAL_ID="$(docker inspect "$RESOLVED_CONTAINER" --format '{{.Id}}')"
+[[ "$RESOLVED_CANONICAL_ID" == "$OLD_CANONICAL_ID" ]] || {
   echo "Compose project or service identity mismatch; refusing deployment" >&2
+  echo "Docker ID: $OLD_CANONICAL_ID; Compose ID: $RESOLVED_CANONICAL_ID" >&2
   exit 1
 }
 OLD_STATE="$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')"
