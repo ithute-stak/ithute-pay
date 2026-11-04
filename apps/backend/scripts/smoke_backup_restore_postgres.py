@@ -181,6 +181,15 @@ with tempfile.TemporaryDirectory(prefix="ithutepay-restore-ci-") as tmp:
          "--dbname", dest_dsn, str(archive)],
         check=True,
     )
+    # Ensure the exact inspected archive remained unchanged through restore.
+    # This guards against accidental archive substitution/corruption in CI.
+    with archive.open("rb") as restored_archive_stream:
+        post_restore_archive_sha256 = hashlib.file_digest(
+            restored_archive_stream, "sha256"
+        ).hexdigest()
+    assert post_restore_archive_sha256 == archive_sha256, (
+        "Backup archive changed between inspection and restore"
+    )
 
 restored_counts = table_row_counts(dest_dsn)
 assert restored_counts == source_counts, "Restored PostgreSQL table counts differ from source"
@@ -228,6 +237,8 @@ if evidence_path:
         "source_database_class": "isolated_local_ci",
         "restored_database_class": "isolated_local_ci",
         "archive_sha256": archive_sha256,
+        "post_restore_archive_sha256": post_restore_archive_sha256,
+        "archive_unchanged_during_restore": True,
         "synthetic_fixture_sha256": source_fingerprint,
         "restored_fixture_sha256": restored_fingerprint,
         "synthetic_records": source_counts["ci_financial_restore_fixtures"],
