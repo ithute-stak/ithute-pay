@@ -61,7 +61,7 @@ def test_invalid_types_and_digests_fail():
         report = valid()
         report["local_image_id"] = local_id
         assert check(report)
-    for value in (True, 1, "true", "false"):
+    for value in (False, 1, "true", "false", None):
         report = valid()
         report["registry_image_published"] = value
         assert check(report)
