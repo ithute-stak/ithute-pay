@@ -5,6 +5,7 @@ never connects to a remote host and never drops a database.
 """
 from __future__ import annotations
 
+import hashlib
 import os
 from pathlib import Path
 import subprocess
@@ -39,6 +40,28 @@ with psycopg.connect(source_dsn) as connection:
 with psycopg.connect(source_dsn, autocommit=True) as connection:
     connection.execute("CREATE DATABASE ithute_restore_smoke")
 
+# Compare the test source and restored database using an explicit allowlist.
+# These CI tables may be empty; this verifies restore consistency, not a
+# production-like financial data recovery exercise.
+TABLES_TO_COMPARE = (
+    "ci_backup_canary",
+    "alembic_version",
+    "reconciliation_items",
+    "provider_transactions",
+    "tenant_reconciliation_push_deliveries",
+)
+
+
+def table_row_counts(dsn: str) -> dict[str, int]:
+    with psycopg.connect(dsn) as connection:
+        return {
+            name: connection.execute(f'SELECT COUNT(*) FROM "{name}"').fetchone()[0]
+            for name in TABLES_TO_COMPARE
+        }
+
+
+source_counts = table_row_counts(source_dsn)
+
 with tempfile.TemporaryDirectory(prefix="ithutepay-restore-ci-") as tmp:
     archive = Path(tmp) / "backup.dump"
     subprocess.run(
@@ -47,11 +70,22 @@ with tempfile.TemporaryDirectory(prefix="ithutepay-restore-ci-") as tmp:
         check=True,
     )
     assert archive.stat().st_size > 0, "Empty PostgreSQL backup archive"
+    archive_sha256 = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    assert len(archive_sha256) == 64, "Invalid archive SHA256"
+    # Refuse corrupted/unparseable archives before writing to destination.
+    inventory = subprocess.run(
+        ["pg_restore", "--list", str(archive)],
+        check=True, capture_output=True, text=True,
+    )
+    assert "ci_backup_canary" in inventory.stdout, "Required data missing from archive"
     subprocess.run(
         ["pg_restore", "--exit-on-error", "--no-owner", "--no-acl",
          "--dbname", dest_dsn, str(archive)],
         check=True,
     )
+
+restored_counts = table_row_counts(dest_dsn)
+assert restored_counts == source_counts, "Restored PostgreSQL table counts differ from source"
 
 with create_engine(dest, pool_pre_ping=True).connect() as db:
     assert db.scalar(text("SELECT marker FROM ci_backup_canary WHERE id=1")) == (
@@ -72,4 +106,4 @@ with create_engine(dest, pool_pre_ping=True).connect() as db:
     assert inspector.has_table("reconciliation_items")
     assert inspector.has_table("provider_transactions")
 
-print("Disposable PostgreSQL archive, data restore, migration and constraints: PASS")
+print("Disposable PostgreSQL archive integrity, restored table counts, migration and constraints: PASS")
