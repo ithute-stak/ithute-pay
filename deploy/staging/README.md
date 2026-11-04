@@ -235,3 +235,26 @@ This validation verifies **report consistency only**. The manual verifier
 still requires a separately published GHCR image, an approved digest, and
 availability of the workflow on the default branch. No image is published
 or deployed as a result of these CI and documentation changes.
+
+
+## Cross-check the proposed staging release packet (offline)
+
+Once an **approved immutable image exists** and the separate, manual
+`staging-image-verify.yml` workflow has produced registry verification
+evidence, an operator can cross-check two non-secret JSON files:
+
+```bash
+python apps/backend/scripts/review_staging_release_packet.py \
+  /secure/staging-release-manifest.json \
+  /secure/registry-verification.json \
+  --registry-run-id ACTUAL_GITHUB_WORKFLOW_RUN_ID
+```
+
+This fails closed if the approved source commit, GHCR immutable digest or
+registry workflow ID differs between the inputs; if a manifest required
+switch is unsafe; or if an evidence record contains unknown fields or
+claims an unperformed deployment. Success prints **READY FOR HUMAN REVIEW
+ONLY**, not `GO`. The operator must independently inspect real
+backup/restore evidence, migration review, release provenance and permissions
+before giving explicit staging approval. The script cannot verify that a
+self-attested backup occurred, nor perform any publishing or deployment.
