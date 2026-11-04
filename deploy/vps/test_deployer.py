@@ -22,6 +22,11 @@ class DeployGuardTests(unittest.TestCase):
         self.assertNotRegex(source, r"(?m)^\s*(docker\s+compose\s+down|docker\s+volume\s+rm|docker\s+system\s+prune)")
         self.assertIn('SERVICE="ithute-pay-bridge"', source)
 
+    def test_compose_overlay_persists_after_deploy(self):
+        self.assertIn("PAY_RELEASE_OVERRIDE:-/opt/ithutepay-deploy/release-override.yml", source)
+        self.assertNotIn('OVERRIDE="$(mktemp --suffix=.yaml)"', source)
+        self.assertNotIn("trap 'rm -f \"$OVERRIDE\"' EXIT", source)
+
     def test_pinned_release_image_is_overridden_last(self):
         self.assertIn('ARGS+=(-f "$OVERRIDE")', source)
         self.assertIn('image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}', source)

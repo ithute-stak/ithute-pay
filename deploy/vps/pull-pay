@@ -41,15 +41,23 @@ flock -n 9 || { echo "Another deployment is in progress" >&2; exit 1; }
 compose() { docker compose --env-file "$PAY_ENV_FILE" "${ARGS[@]}" "$@"; }
 IMAGE="ghcr.io/ithute-stak/ithute-pay:latest"
 SERVICE="ithute-pay-bridge"
-# Never allow auto-migrations during app startup; deployer runs them explicitly.
-OVERRIDE="$(mktemp --suffix=.yaml)"
-trap 'rm -f "$OVERRIDE"' EXIT
-cat >"$OVERRIDE" <<'YAML'
+# Docker Compose records the exact config-file list as container labels.
+# Never reference a temporary file here: it disappears after deployment and
+# leaves future Compose introspection referring to a nonexistent path.
+OVERRIDE="${PAY_RELEASE_OVERRIDE:-/opt/ithutepay-deploy/release-override.yml}"
+[[ "$OVERRIDE" = /* ]] || { echo "Release override must be an absolute path" >&2; exit 2; }
+install -d -m 0755 "$(dirname "$OVERRIDE")"
+OVERRIDE_TMP="$(mktemp "$(dirname "$OVERRIDE")/.release-override.XXXXXX")"
+trap 'rm -f "$OVERRIDE_TMP"' EXIT
+cat >"$OVERRIDE_TMP" <<'YAML'
 services:
   ithute-pay-bridge:
     environment:
       RUN_MIGRATIONS_ON_START: "false"
+    image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}
 YAML
+install -m 0644 "$OVERRIDE_TMP" "$OVERRIDE"
+rm -f "$OVERRIDE_TMP"
 ARGS+=(-f "$OVERRIDE")
 
 # Locate the currently running service using immutable Compose labels before
@@ -65,12 +73,8 @@ mapfile -t EXISTING_CONTAINERS < <(docker ps --no-trunc -aq \
 OLD_CONTAINER="${EXISTING_CONTAINERS[0]}"
 OLD_IMAGE_ID="$(docker inspect "$OLD_CONTAINER" --format '{{.Image}}')"
 [[ "$OLD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
-# The last production release-image overlay pins a fixed registry digest.
-# A final ephemeral Compose overlay selects the candidate image while the
-# five existing operator-managed Compose files stay unchanged.
-cat >>"$OVERRIDE" <<'YAML'
-    image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}
-YAML
+# The persistent final override supersedes the legacy release-image pin.
+# All five existing operator-managed Compose files remain unchanged.
 export IPB_IMAGE="$OLD_IMAGE_ID"
 compose config --quiet
 RESOLVED_CONTAINER="$(compose ps -aq "$SERVICE")"
