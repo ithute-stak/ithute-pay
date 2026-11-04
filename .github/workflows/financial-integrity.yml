@@ -111,40 +111,11 @@ jobs:
           EVIDENCE_SHA: ${{ github.sha }}
           EVIDENCE_RUN: ${{ github.run_id }}
         run: |
-          python - <<'PY'
-          import json, os, re
-          from pathlib import Path
-          report = json.loads(Path("disposable-restore-evidence.json").read_text())
-          assert report["kind"] == "ithutepay_disposable_postgres_restore"
-          assert report["result"] == "passed"
-          assert report["source_checkout_sha"] == os.environ["EVIDENCE_SHA"]
-          assert report["github_run_id"] == os.environ["EVIDENCE_RUN"]
-          for key in ("archive_sha256", "synthetic_fixture_sha256", "restored_fixture_sha256"):
-              assert re.fullmatch(r"[0-9a-f]{64}", report[key]), key
-          assert report["synthetic_fixture_sha256"] == report["restored_fixture_sha256"]
-          assert report["synthetic_records"] == 4
-          assert report["tenant_record_counts"] == {"tenant-alpha": 2, "tenant-beta": 2}
-          assert report["tenant_status_minor_unit_totals"] == {
-              "tenant-alpha/settled": 12500,
-              "tenant-alpha/pending": 750,
-              "tenant-beta/failed": 98555,
-              "tenant-beta/reversed": 100,
-          }
-          assert all(
-              type(total) is int
-              for total in report["tenant_status_minor_unit_totals"].values()
-          )
-          for key in (
-              "restored_counts_match", "restored_totals_match",
-              "duplicate_provider_reference_rejected",
-              "duplicate_tenant_idempotency_key_rejected", "negative_amount_rejected",
-              "schema_constraints_verified",
-          ):
-              assert report[key] is True, key
-          for key in ("production_data_used", "historical_data_recovery_certified", "deployment_performed"):
-              assert report[key] is False, key
-          print("Disposable CI restore evidence validated: no production recovery asserted")
-          PY
+          set -euo pipefail
+          python scripts/validate_disposable_restore_evidence.py \
+            disposable-restore-evidence.json \
+            --commit "$EVIDENCE_SHA" \
+            --run-id "$EVIDENCE_RUN"
       - name: Upload verified disposable restore evidence
         uses: actions/upload-artifact@v4
         with:
