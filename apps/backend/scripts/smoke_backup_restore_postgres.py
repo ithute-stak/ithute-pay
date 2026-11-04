@@ -70,7 +70,8 @@ with tempfile.TemporaryDirectory(prefix="ithutepay-restore-ci-") as tmp:
         check=True,
     )
     assert archive.stat().st_size > 0, "Empty PostgreSQL backup archive"
-    archive_sha256 = hashlib.file_digest(archive.open("rb"), "sha256").hexdigest()
+    with archive.open("rb") as backup_stream:
+        archive_sha256 = hashlib.file_digest(backup_stream, "sha256").hexdigest()
     assert len(archive_sha256) == 64, "Invalid archive SHA256"
     # Refuse corrupted/unparseable archives before writing to destination.
     inventory = subprocess.run(
