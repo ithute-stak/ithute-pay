@@ -1,0 +1,21 @@
+# Standalone project: do NOT combine this file with the existing payment
+# platform compose stack. Reuses the existing shared Caddy public-edge network.
+name: ithutepay-flutter
+services:
+  flutter-web:
+    container_name: ithutepay-flutter-web
+    image: ithutepay-flutter-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    networks:
+      - public-edge
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1/healthz"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+networks:
+  public-edge:
+    external: true
