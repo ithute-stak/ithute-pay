@@ -52,19 +52,32 @@ services:
 YAML
 ARGS+=(-f "$OVERRIDE")
 
-# Save previous immutable image reference before pulling or changing the container.
-OLD_CONTAINER="$(compose ps -q "$SERVICE")"
-[[ -n "$OLD_CONTAINER" ]] || { echo "App container not found; refusing first-time install" >&2; exit 1; }
+# Locate the currently running service using immutable Compose labels before
+# evaluating its YAML. compose.vps.yaml requires IPB_IMAGE to be defined.
+PROJECT="${PAY_COMPOSE_PROJECT:-ithute-pay}"
+mapfile -t EXISTING_CONTAINERS < <(docker ps -aq \
+  --filter "label=com.docker.compose.project=$PROJECT" \
+  --filter "label=com.docker.compose.service=$SERVICE")
+[[ ${#EXISTING_CONTAINERS[@]} -eq 1 ]] || {
+  echo "Expected exactly one existing $PROJECT/$SERVICE container; found ${#EXISTING_CONTAINERS[@]}" >&2
+  exit 1
+}
+OLD_CONTAINER="${EXISTING_CONTAINERS[0]}"
 OLD_IMAGE_ID="$(docker inspect "$OLD_CONTAINER" --format '{{.Image}}')"
-[[ "$OLD_IMAGE_ID" == sha256:* ]] || exit 1
+[[ "$OLD_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || exit 1
 # The last production release-image overlay pins a fixed registry digest.
-# Add an ephemeral final overlay to select exactly the captured candidate image,
-# without changing any of the five operator-managed production Compose files.
+# A final ephemeral Compose overlay selects the candidate image while the
+# five existing operator-managed Compose files stay unchanged.
 cat >>"$OVERRIDE" <<'YAML'
     image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}
 YAML
 export IPB_IMAGE="$OLD_IMAGE_ID"
 compose config --quiet
+RESOLVED_CONTAINER="$(compose ps -aq "$SERVICE")"
+[[ "$RESOLVED_CONTAINER" == "$OLD_CONTAINER" ]] || {
+  echo "Compose project or service identity mismatch; refusing deployment" >&2
+  exit 1
+}
 OLD_STATE="$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')"
 [[ "$OLD_STATE" == true ]] || { echo "Old app is not running; refusing update" >&2; exit 1; }
 # Image IDs are valid Docker image references locally and survive tag movements.
