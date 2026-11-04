@@ -11,13 +11,14 @@ from uuid import UUID
 
 from sqlalchemy import select, text
 
-from database.models import Merchant, PlatformMerchantSettings
+from database.models import Merchant, PlatformMerchantSettings, GatewayProviderConfiguration
 from database.session import SessionLocal
 from services.audit import write_audit
 
 EXPECTED_COMPANY_ID = "4236a21f-5164-48aa-90f3-a35eccd23ae2"
 MASTER_SLUG = "ithutepay-master"
 MASTER_NAME = "IthutePay Master Merchant"
+EXPECTED_MPESA_CODE = "38542"
 
 
 def plan_bootstrap(merchants: list[Merchant], masters: list[PlatformMerchantSettings]) -> dict:
@@ -46,6 +47,21 @@ def plan_bootstrap(merchants: list[Merchant], masters: list[PlatformMerchantSett
     }
 
 
+def verify_existing_mpesa_gateway(rows: list[GatewayProviderConfiguration]) -> dict:
+    """Require the existing production provider 38542; never create or alter it."""
+    production = [row for row in rows if row.environment == "production"]
+    if len(production) != 1:
+        raise ValueError("Expected exactly one M-PESA production configuration")
+    row = production[0]
+    if str(row.service_provider_code or "").strip() != EXPECTED_MPESA_CODE:
+        raise ValueError("Production M-PESA shortcode differs from the verified 38542")
+    if not row.active or not row.enabled:
+        raise ValueError("Existing production M-PESA provider must be active and enabled")
+    if str(row.mode).lower() != "live":
+        raise ValueError("Expected a live M-PESA provider configuration")
+    return {"provider_configuration_id": row.id, "mpesa_service_provider_code": EXPECTED_MPESA_CODE}
+
+
 def execute(*, apply: bool) -> dict:
     with SessionLocal() as db:
         if apply:
@@ -56,6 +72,10 @@ def execute(*, apply: bool) -> dict:
         merchants = db.scalars(select(Merchant).order_by(Merchant.id)).all()
         masters = db.scalars(select(PlatformMerchantSettings)).all()
         plan = plan_bootstrap(merchants, masters)
+        providers = db.scalars(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa"
+        )).all()
+        plan.update(verify_existing_mpesa_gateway(providers))
         if not apply:
             return plan
 
@@ -68,6 +88,8 @@ def execute(*, apply: bool) -> dict:
                     "loanhub_integration": {
                         "company_id": EXPECTED_COMPANY_ID,
                         "company_name": "Batlokoa Financial Services",
+                        "mpesa_service_provider_code": EXPECTED_MPESA_CODE,
+                        "provider_configuration_id": plan["provider_configuration_id"],
                         "status": "pending_authorization",
                     },
                 },
@@ -79,7 +101,7 @@ def execute(*, apply: bool) -> dict:
                 action="master_merchant.bootstrap_created",
                 resource_type="merchant", resource_id=merchant.id,
                 merchant_id=merchant.id,
-                metadata={"loanhub_company_id": EXPECTED_COMPANY_ID},
+                metadata={"loanhub_company_id": EXPECTED_COMPANY_ID, "mpesa_service_provider_code": EXPECTED_MPESA_CODE},
             )
         else:
             merchant = merchants[0]
