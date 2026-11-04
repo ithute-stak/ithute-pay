@@ -27,6 +27,8 @@ def plan_bootstrap(merchants: list[Merchant], masters: list[PlatformMerchantSett
         raise ValueError("More than one IthutePay merchant exists; manual review required")
     if len(masters) > 1:
         raise ValueError("Multiple master settings exist; manual review required")
+    if merchants and (getattr(merchants[0], "slug", MASTER_SLUG) != MASTER_SLUG):
+        raise ValueError("Existing merchant is not the IthutePay master; manual review required")
     if masters and (not merchants or masters[0].merchant_id != merchants[0].id):
         raise ValueError("Master settings do not match the sole merchant")
     if masters and not masters[0].active:
