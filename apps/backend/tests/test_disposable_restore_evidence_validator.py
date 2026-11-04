@@ -84,3 +84,12 @@ def test_changed_backup_archive_and_false_stability_claim_fail_closed():
     e = report()
     e["post_restore_archive_sha256"] = "INVALID"
     assert check(e)
+
+
+def test_cross_tenant_idempotency_claim_must_be_explicit_and_true():
+    e = report()
+    e["cross_tenant_idempotency_key_reuse_allowed"] = False
+    assert check(e)
+    e = report()
+    del e["cross_tenant_idempotency_key_reuse_allowed"]
+    assert check(e)
