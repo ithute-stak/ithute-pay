@@ -25,6 +25,13 @@ def test_registry_verify_must_be_no_execute_no_deploy():
     assert "RepoDigests" in content
     assert "actions/upload-artifact@v4" in content
     assert "ithutepay-verified-registry-image" in content
+    assert "validate_staging_registry_evidence.py" in content
+    assert "\"github_run_id\": os.environ[\"GITHUB_RUN_ID\"]" in content
+    steps = yaml.safe_load(content)["jobs"]["verify-published-image"]["steps"]
+    validator = next(i for i, step in enumerate(steps) if step["name"] == "Independently validate registry evidence")
+    upload = next(i for i, step in enumerate(steps) if step["name"] == "Upload non-secret registry verification evidence")
+    assert validator < upload
+    assert "continue-on-error" not in steps[validator]
     assert "\"container_executed\": False" in content
     assert "\"staging_deployed\": False" in content
     for command in (
