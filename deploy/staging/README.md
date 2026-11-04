@@ -204,3 +204,18 @@ API/database/frontend smoke checks can be certified. This ensures the
 health results come from the tested image rather than another locally
 available image. The ID remains a **local image ID**, not a published
 registry digest or independently verified provenance statement.
+
+
+### Fail-closed PR rehearsal evidence validation
+
+Before uploading `ithutepay-pr-staging-rehearsal`, CI independently runs
+`apps/backend/scripts/validate_staging_rehearsal_evidence.py` against the
+generated JSON. The validator rejects missing or unknown fields, an incorrect
+GitHub Actions run ID, mismatched checkout or PR head SHA, image tag not tied
+to the tested checkout, malformed local image IDs, or any false claims of
+registry publication, staging deployment or provider certification. It never
+prints untrusted field values or contacts providers, registries or servers.
+
+This is **integrity validation of a CI-authored report**, not an independent
+cryptographic signature and not evidence that a later GHCR image or production
+release was certified.
