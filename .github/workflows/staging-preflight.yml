@@ -9,6 +9,8 @@ on:
       - 'apps/backend/tests/test_staging_compose_contract.py'
       - 'apps/backend/tests/test_staging_supervisor_contract.py'
       - 'apps/backend/tests/test_staging_image_verify_workflow.py'
+      - 'apps/backend/tests/test_staging_rehearsal_evidence_contract.py'
+      - '.github/workflows/build-vps-image.yml'
       - '.github/workflows/staging-image-verify.yml'
       - 'apps/backend/scripts/staging_postdeploy_smoke.py'
       - 'apps/backend/tests/test_staging_postdeploy_smoke.py'
@@ -23,6 +25,8 @@ on:
       - 'apps/backend/tests/test_staging_compose_contract.py'
       - 'apps/backend/tests/test_staging_supervisor_contract.py'
       - 'apps/backend/tests/test_staging_image_verify_workflow.py'
+      - 'apps/backend/tests/test_staging_rehearsal_evidence_contract.py'
+      - '.github/workflows/build-vps-image.yml'
       - '.github/workflows/staging-image-verify.yml'
       - 'apps/backend/scripts/staging_postdeploy_smoke.py'
       - 'apps/backend/tests/test_staging_postdeploy_smoke.py'
@@ -45,7 +49,7 @@ jobs:
         working-directory: apps/backend
         run: |
           python -m pip install pytest PyYAML
-          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py tests/test_staging_postdeploy_smoke.py tests/test_staging_supervisor_contract.py tests/test_staging_image_verify_workflow.py
+          python -m pytest --noconftest -vv --tb=short tests/test_staging_preflight.py tests/test_staging_compose_contract.py tests/test_staging_postdeploy_smoke.py tests/test_staging_supervisor_contract.py tests/test_staging_image_verify_workflow.py tests/test_staging_rehearsal_evidence_contract.py
       - name: Refuse missing release evidence
         working-directory: apps/backend
         run: |
