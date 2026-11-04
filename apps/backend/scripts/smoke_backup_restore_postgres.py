@@ -104,10 +104,59 @@ def financial_fingerprint(dsn: str) -> tuple[str, dict[str, int]]:
     return digest, tenant_counts
 
 
+def financial_totals(dsn: str) -> dict[tuple[str, str], tuple[int, int]]:
+    """Amounts stay integer minor units, partitioned by tenant and status."""
+    with psycopg.connect(dsn) as connection:
+        values = connection.execute(
+            "SELECT tenant_id, status, COUNT(*), SUM(amount_minor) "
+            "FROM ci_financial_restore_fixtures "
+            "GROUP BY tenant_id, status ORDER BY tenant_id, status"
+        ).fetchall()
+    return {(tenant, status): (count, total) for tenant, status, count, total in values}
+
+
+def assert_restored_constraint(
+    statement: str, parameters: tuple[object, ...], expected_error: type[Exception],
+) -> None:
+    """Try to violate a restored constraint; leave the disposable DB unchanged."""
+    with psycopg.connect(dest_dsn) as connection:
+        try:
+            with connection.transaction():
+                connection.execute(statement, parameters)
+                raise AssertionError("Restored synthetic financial constraint was not enforced")
+        except expected_error:
+            pass
+
+
+def check_restored_financial_constraints() -> None:
+    insert = (
+        "INSERT INTO ci_financial_restore_fixtures "
+        "(id, tenant_id, provider_reference, idempotency_key, amount_minor, status) "
+        "VALUES (%s, %s, %s, %s, %s, %s)"
+    )
+    # Provider transaction references must remain globally unique.
+    assert_restored_constraint(
+        insert, (11, "tenant-beta", "synthetic-mpesa-001", "new-beta-key", 10, "pending"),
+        psycopg.errors.UniqueViolation,
+    )
+    # The same tenant must not reuse its idempotency key.
+    assert_restored_constraint(
+        insert, (12, "tenant-alpha", "new-provider-012", "alpha-pay-001", 10, "pending"),
+        psycopg.errors.UniqueViolation,
+    )
+    # Amounts cannot become negative after recovery.
+    assert_restored_constraint(
+        insert, (13, "tenant-beta", "new-provider-013", "new-beta-key", -1, "pending"),
+        psycopg.errors.CheckViolation,
+    )
+
+
 source_counts = table_row_counts(source_dsn)
 assert source_counts["ci_financial_restore_fixtures"] == 4, "Missing synthetic financial rows"
 source_fingerprint, source_tenants = financial_fingerprint(source_dsn)
 assert source_tenants == {"tenant-alpha": 2, "tenant-beta": 2}
+source_totals = financial_totals(source_dsn)
+assert sum(total for _, total in source_totals.values()) == 111905
 
 with tempfile.TemporaryDirectory(prefix="ithutepay-restore-ci-") as tmp:
     archive = Path(tmp) / "backup.dump"
@@ -138,6 +187,9 @@ assert restored_counts == source_counts, "Restored PostgreSQL table counts diffe
 restored_fingerprint, restored_tenants = financial_fingerprint(dest_dsn)
 assert restored_fingerprint == source_fingerprint, "Restored synthetic financial values differ"
 assert restored_tenants == source_tenants, "Restored tenant distribution differs"
+assert financial_totals(dest_dsn) == source_totals, "Restored tenant/status amounts differ"
+check_restored_financial_constraints()
+assert financial_fingerprint(dest_dsn)[0] == source_fingerprint, "Constraint checks mutated restored fixtures"
 
 with create_engine(dest, pool_pre_ping=True).connect() as db:
     assert db.scalar(text("SELECT marker FROM ci_backup_canary WHERE id=1")) == (
@@ -158,4 +210,4 @@ with create_engine(dest, pool_pre_ping=True).connect() as db:
     assert inspector.has_table("reconciliation_items")
     assert inspector.has_table("provider_transactions")
 
-print("Disposable PostgreSQL archive integrity, synthetic financial value digest, tenant distribution, table counts, migration and constraints: PASS")
+print("Disposable PostgreSQL archive integrity, synthetic financial fingerprint, tenant/status totals, duplicate-prevention, amount constraints and migration: PASS")
