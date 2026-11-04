@@ -7,6 +7,11 @@ SCRIPT = Path(__file__).with_name("pull-pay")
 source = SCRIPT.read_text()
 
 class DeployGuardTests(unittest.TestCase):
+    def test_compose_run_uses_supported_options(self):
+        self.assertNotIn("compose run --rm --no-deps --no-build", source)
+        self.assertIn("compose run --rm --no-deps --pull never", source)
+        self.assertIn("Alembic current itself failed", source)
+
     def test_only_published_image(self):
         self.assertIn("ghcr.io/ithute-stak/ithute-pay:latest", source)
         self.assertIn('docker pull "$IMAGE"', source)

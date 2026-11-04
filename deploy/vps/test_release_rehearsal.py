@@ -61,7 +61,7 @@ elif args and args[0] == "compose":
     elif cmd == "ps":
         print("mock-container")
     elif cmd == "run":
-        if "current" in args and s["migration_required"]:
+        if "current" in args and "--check" in args and s["migration_required"]:
             if not s["migration_applied"]:
                 sys.exit(10)
         if "upgrade" in args:
