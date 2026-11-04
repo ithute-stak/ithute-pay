@@ -83,6 +83,46 @@ jobs:
               raise SystemExit("PostgreSQL test session must be enabled")
           print("PostgreSQL financial concurrency suite enabled")
           PY
+      - name: Exercise clean Alembic history on isolated PostgreSQL
+        working-directory: apps/backend
+        run: |
+          python - <<'PY'
+          import psycopg
+          with psycopg.connect(
+              "postgresql://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_financial_test",
+              autocommit=True,
+          ) as connection:
+              connection.execute("CREATE DATABASE ithute_migration_smoke")
+          PY
+          DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \
+            python scripts/smoke_migrations_postgres.py
+      - name: Verify PostgreSQL backup and restore on disposable databases
+        working-directory: apps/backend
+        env:
+          CI_RESTORE_EVIDENCE_PATH: disposable-restore-evidence.json
+        run: |
+          pg_dump --version
+          pg_restore --version
+          DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \
+            python scripts/smoke_backup_restore_postgres.py
+      - name: Validate non-secret disposable restore evidence
+        working-directory: apps/backend
+        env:
+          EVIDENCE_SHA: ${{ github.sha }}
+          EVIDENCE_RUN: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python scripts/validate_disposable_restore_evidence.py \
+            disposable-restore-evidence.json \
+            --commit "$EVIDENCE_SHA" \
+            --run-id "$EVIDENCE_RUN"
+      - name: Upload verified disposable restore evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-disposable-restore-evidence
+          path: apps/backend/disposable-restore-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
@@ -91,6 +131,18 @@ jobs:
             tests/test_financial_integrity_posting.py \
             tests/test_payment_lifecycle.py \
             tests/test_provider_operation_reservation.py \
+            tests/test_master_tenant_foundation.py \
+            tests/test_tenant_management_api.py \
+            tests/test_merchant_network_admin.py \
+            tests/test_tenant_portal_access.py \
+            tests/test_tenant_reporting.py \
+            tests/test_tenant_reconciliation.py \
+            tests/test_tenant_reconciliation_cases.py \
+            tests/test_tenant_reconciliation_operations.py \
+            tests/test_tenant_reconciliation_alerts.py \
+            tests/test_tenant_recon_push_worker.py \
+            tests/test_tenant_push_operations.py \
+            tests/test_tenant_migration_hardening.py \
             tests/test_merchant_payout_dispatch_claim.py \
             tests/test_collection_dispatch_claim.py \
             tests/test_reconciliation_terminal_state.py \

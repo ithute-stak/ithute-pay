@@ -1,0 +1,105 @@
+name: IthutePay real tenant browser integration
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/**'
+      - 'apps/frontend/**'
+      - '.github/workflows/tenant-live-integration.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - 'apps/frontend/**'
+      - '.github/workflows/tenant-live-integration.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tenant-live-integration-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  browser-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ithute_test
+          POSTGRES_PASSWORD: isolated_ci_password
+          POSTGRES_DB: ithute_browser_integration_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ithute_test -d ithute_browser_integration_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      CI: 'true'
+      ENVIRONMENT: 'test'
+      DEBUG: 'false'
+      AUTO_CREATE_PLATFORM_ADMIN: 'false'
+      ITHUTE_AUTH_ENABLED: 'false'
+      MPESA_ENABLED: 'false'
+      MPESA_MODE: 'simulator'
+      ITHUTE_PUSH_ENABLED: 'false'
+      ITHUTE_RECON_PUSH_DISPATCH_ENABLED: 'false'
+      SECRET_KEY: 'isolated-ci-secret-at-least-32-characters'
+      REDIS_URL: ''
+      NEXT_TELEMETRY_DISABLED: '1'
+      NEXT_PUBLIC_API_BASE: '/api/v1'
+      DATABASE_URL: postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_browser_integration_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend
+        run: python -m pip install -r apps/backend/requirements.txt
+      - name: Seed disposable PostgreSQL with tenant-only fixtures
+        working-directory: apps/backend
+        run: PYTHONPATH=. python scripts/seed_tenant_browser_integration.py
+      - name: Start real FastAPI
+        working-directory: apps/backend
+        run: |
+          python -m uvicorn main:app --host 127.0.0.1 --port 8001 > /tmp/ithutepay-integration-api.log 2>&1 &
+          echo $! > /tmp/ithutepay-integration-api.pid
+          for attempt in $(seq 1 45); do
+            if curl -fsS http://localhost:8001/health >/dev/null; then
+              echo "Real FastAPI is healthy"
+              exit 0
+            fi
+            sleep 1
+          done
+          cat /tmp/ithutepay-integration-api.log
+          exit 1
+      - name: Install frontend and Chromium
+        working-directory: apps/frontend
+        run: |
+          corepack enable
+          corepack prepare pnpm@10.13.1 --activate
+          pnpm install --frozen-lockfile=false
+          pnpm exec playwright install --with-deps chromium
+      - name: Browser-to-backend-to-PostgreSQL isolation checks
+        working-directory: apps/frontend
+        run: pnpm exec playwright test --config=playwright.tenant.config.ts e2e/tenant/live-backend.spec.ts e2e/tenant/authorization-matrix.spec.ts
+      - name: Upload failure diagnostics
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-live-tenant-integration-diagnostics
+          path: |
+            apps/frontend/test-results/
+            /tmp/ithutepay-integration-api.log
+          if-no-files-found: ignore
+          retention-days: 7

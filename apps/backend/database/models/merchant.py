@@ -44,5 +44,6 @@ class ApiKey(Base, TimestampMixin):
     secret_hash: Mapped[str] = mapped_column(String(64), unique=True)
     last4: Mapped[str] = mapped_column(String(4))
     scopes: Mapped[list[str]] = mapped_column(JSON, default=list)
+    expires_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
     last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)

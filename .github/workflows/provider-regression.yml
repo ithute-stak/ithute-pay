@@ -1,0 +1,99 @@
+name: IthutePay offline provider regression gate
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/**'
+      - '.github/workflows/provider-regression.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/**'
+      - '.github/workflows/provider-regression.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: offline-provider-regression-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  provider-regression:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: ithute_test
+          POSTGRES_PASSWORD: isolated_ci_password
+          POSTGRES_DB: ithute_provider_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U ithute_test -d ithute_provider_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      ENVIRONMENT: test
+      PG_FINANCIAL_CONCURRENCY_TEST: 'true'
+      GOLINK_PG_CONCURRENCY_TEST: 'true'
+      DATABASE_URL: postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_provider_test
+      MPESA_ENABLED: 'false'
+      MPESA_MODE: simulator
+      ITHUTE_PUSH_ENABLED: 'false'
+      ITHUTE_RECON_PUSH_DISPATCH_ENABLED: 'false'
+      GOLINK_RECONCILIATION_ENABLED: 'false'
+      SECRET_KEY: 'isolated-provider-test-secret-at-least-32-chars'
+      REDIS_URL: 'redis://localhost:6379/15'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+          cache: pip
+          cache-dependency-path: apps/backend/requirements.txt
+      - name: Install backend dependencies
+        run: python -m pip install -r apps/backend/requirements.txt pytest
+      - name: Verify localhost provider test database and disabled network providers
+        run: |
+          python - <<'PY'
+          import os
+          from sqlalchemy.engine import make_url
+          u = make_url(os.environ['DATABASE_URL'])
+          assert u.get_backend_name() == 'postgresql'
+          assert u.host in ('localhost', '127.0.0.1')
+          assert u.database == 'ithute_provider_test'
+          assert os.environ['MPESA_ENABLED'] == 'false'
+          assert os.environ['ITHUTE_PUSH_ENABLED'] == 'false'
+          assert os.environ['GOLINK_RECONCILIATION_ENABLED'] == 'false'
+          print('Offline provider-contract test target verified')
+          PY
+      - name: Run M-PESA and Golink provider-contract regressions
+        working-directory: apps/backend
+        run: |
+          python -m pytest -vv -ra --tb=short --durations=10 \
+            --junitxml=provider-regression-results.xml \
+            tests/test_provider_staging_contract.py \
+            tests/test_golink_route_isolation.py \
+            tests/test_golink_release_gate.py \
+            tests/test_golink_reconciliation.py \
+            tests/test_golink_terminal_replays.py \
+            tests/test_golink_webhook_identity.py \
+            tests/test_golink_webhooks.py \
+            tests/test_golink_sandbox_probe.py \
+            tests/test_mpesa_hardening.py \
+            tests/test_mpesa_response_classification.py \
+            tests/test_mpesa_callback_security.py \
+            tests/test_callback_concurrency_contract.py
+      - name: Publish offline provider test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-provider-regression-results
+          path: apps/backend/provider-regression-results.xml
+          if-no-files-found: warn
+          retention-days: 14

@@ -1,0 +1,129 @@
+# Read-only registry image verification. This does not publish, run, or deploy.
+name: IthutePay immutable staging image verification
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit_sha:
+        description: Exact approved 40-character Git commit SHA
+        required: true
+        type: string
+      image_digest:
+        description: Exact published GHCR sha256 digest (64 lowercase hex characters)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  packages: read
+
+jobs:
+  verify-published-image:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check immutable release identifiers
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+        run: |
+          set -euo pipefail
+          [[ "$COMMIT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid source commit"; exit 1; }
+          [[ "$IMAGE_DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "Invalid registry digest"; exit 1; }
+          echo "Immutable identifier formats validated"
+      - name: Checkout exact approved commit
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.commit_sha }}
+          persist-credentials: false
+      - name: Refuse checkout mismatch
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "$COMMIT_SHA"
+          echo "Approved source commit exists and matches checkout"
+      - name: Authenticate to GHCR for read-only pull
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Verify published immutable digest and source revision label
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          IMAGE="ghcr.io/ithute-stak/ithute-pay@$IMAGE_DIGEST"
+          # Pull and inspect only; never run a container or initiate a payment.
+          docker pull "$IMAGE"
+          ACTUAL_REVISION="$(docker image inspect "$IMAGE" --format '{{ index .Config.Labels "org.opencontainers.image.revision" }}')"
+          test "$ACTUAL_REVISION" = "$COMMIT_SHA" || {
+            echo "NO-GO: image provenance revision label does not match approved source"
+            exit 1
+          }
+          IMAGE_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+          [[ "$IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]] || {
+            echo "NO-GO: invalid local image ID"
+            exit 1
+          }
+          # Confirm Docker resolved the exact registry digest requested.
+          export IMAGE COMMIT_SHA IMAGE_DIGEST
+          python - <<'PY'
+          import json
+          import os
+          import subprocess
+          from pathlib import Path
+
+          image = os.environ["IMAGE"]
+          inspected = json.loads(subprocess.check_output(
+              ["docker", "image", "inspect", image], text=True,
+          ))
+          assert len(inspected) == 1, "NO-GO: ambiguous image"
+          details = inspected[0]
+          assert image in details.get("RepoDigests", []), "NO-GO: wrong registry digest"
+          assert details.get("Config", {}).get("Labels", {}).get(
+              "org.opencontainers.image.revision",
+          ) == os.environ["COMMIT_SHA"], "NO-GO: wrong source revision"
+          evidence = {
+              "kind": "ithutepay_read_only_ghcr_image_verification",
+              "result": "passed",
+              "approved_commit": os.environ["COMMIT_SHA"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
+              "verified_registry_reference": image,
+              "local_image_id": details["Id"],
+              "registry_image_published": True,
+              "container_executed": False,
+              "staging_deployed": False,
+              "external_provider_certified": False,
+              "cryptographic_provenance_attestation_verified": False,
+          }
+          path = Path("image-verification-evidence/registry-verification.json")
+          path.parent.mkdir(exist_ok=True)
+          path.write_text(json.dumps(evidence, indent=2, sort_keys=True))
+          print("Non-secret registry verification evidence recorded")
+          PY
+          echo "READ-ONLY REGISTRY VERIFICATION PASSED"
+          echo "A digest and image revision label match is not cryptographic SLSA attestation verification."
+          echo "No registry publication, container execution, migration or deployment occurred."
+      - name: Independently validate registry evidence
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python apps/backend/scripts/validate_staging_registry_evidence.py \
+            image-verification-evidence/registry-verification.json \
+            --commit "$COMMIT_SHA" \
+            --digest "$IMAGE_DIGEST" \
+            --run-id "$GITHUB_RUN_ID"
+      - name: Upload non-secret registry verification evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-verified-registry-image
+          path: image-verification-evidence/registry-verification.json
+          if-no-files-found: error
+          retention-days: 30
