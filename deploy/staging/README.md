@@ -219,3 +219,19 @@ prints untrusted field values or contacts providers, registries or servers.
 This is **integrity validation of a CI-authored report**, not an independent
 cryptographic signature and not evidence that a later GHCR image or production
 release was certified.
+
+
+### Registry-verification evidence validation
+
+The manual read-only GHCR workflow now records the GitHub run ID in its
+non-secret registry-inspection report. Before uploading the artifact it runs
+`apps/backend/scripts/validate_staging_registry_evidence.py` to reject any
+mismatch of approved commit, exact immutable registry digest, workflow run
+ID, or local Docker image ID. Unknown fields, nested data and unsupported
+claims of execution, deployment, provider certification or cryptographic
+attestation are rejected without printing the supplied values.
+
+This validation verifies **report consistency only**. The manual verifier
+still requires a separately published GHCR image, an approved digest, and
+availability of the workflow on the default branch. No image is published
+or deployed as a result of these CI and documentation changes.
