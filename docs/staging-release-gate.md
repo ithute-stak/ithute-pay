@@ -55,7 +55,11 @@ regressions are reviewed.
   database through the entire migration chain and verifies schema revision.
 - `smoke_backup_restore_postgres.py` creates a canary record, performs
   `pg_dump` and `pg_restore` between **two disposable localhost databases**,
-  checks the canary, Alembic revision and key push outbox constraints.
+  checks that the archive inventory is readable, computes its SHA-256, compares
+  row counts for an explicit allowlist of reconciliation/provider/push tables
+  against the source, and checks the canary, Alembic revision and constraints.
+  This test may contain empty application tables and **does not establish**
+  recovery of real historical financial records.
 - PostgreSQL financial-integrity tests exercise transaction concurrency,
   tenant API isolation, reconciliation casework and guarded notification
   delivery.
