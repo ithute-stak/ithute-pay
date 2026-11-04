@@ -185,3 +185,14 @@ independently rejects an altered fingerprint, unknown fields or a false
 stability claim. This detects archive changes during the **same disposable CI
 restore**, but does not independently attest archived production backups or
 guarantee disaster recovery.
+
+
+### Restored tenant-scoped idempotency
+
+The disposable recovery rehearsal also verifies a complementary rule: the
+same idempotency key is **rejected within one tenant** but permitted for a
+different tenant when the provider reference is distinct. The successful
+cross-tenant insertion is deliberately rolled back and the restored fixture
+fingerprint is rechecked. The strict recovery-evidence report records this
+check explicitly. It tests synthetic database constraint behavior, not
+permission to view or access other tenants' data and not live payment routing.
