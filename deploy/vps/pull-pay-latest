@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+set -Eeuo pipefail
+umask 077
+[[ $# == 2 && "$1" == pay && "$2" == latest ]] || { echo "Usage: sudo pull pay latest"; exit 2; }
+[[ $EUID == 0 ]] || { echo "Run with sudo"; exit 2; }
+cd /home/administrator/ithute-pay
+exec 9>/run/lock/ithutepay-release.lock
+flock -n 9 || exit 1
+for f in compose.yaml compose.vps.yaml compose.production-networks.yml compose.release-networks.yml compose.release-image.yml; do test -f "$f" || exit 1; done
+old_id="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}')"
+docker pull ghcr.io/ithute-stak/ithute-pay:latest
+new_id="$(docker image inspect ghcr.io/ithute-stak/ithute-pay:latest --format '{{.Id}}')"
+new_ref="$(docker image inspect ghcr.io/ithute-stak/ithute-pay:latest --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep '^ghcr.io/ithute-stak/ithute-pay@sha256:' | head -1)"
+[[ "$new_ref" =~ ^ghcr.io/ithute-stak/ithute-pay@sha256:[a-f0-9]{64}$ ]] || exit 1
+if [[ "$new_id" == "$old_id" ]]; then echo "Already running latest"; exit 0; fi
+overlay="$(mktemp -p . release-XXXXXXXX.yaml)"
+trap 'rm -f "$overlay"' EXIT
+write_overlay() {
+cat >"$overlay" <<YAML
+services:
+  ithute-pay-bridge:
+    image: $1
+    build: !reset null
+    environment:
+      RUN_MIGRATIONS_ON_START: "false"
+      RUN_BACKGROUND_JOBS: "false"
+      MPESA_ENABLED: "false"
+      GOLINK_COLLECTIONS_ENABLED: "false"
+      GOLINK_RECONCILIATION_ENABLED: "false"
+      ITHUTE_PUSH_ENABLED: "false"
+      ITHUTE_RECON_PUSH_DISPATCH_ENABLED: "false"
+      AUTO_CREATE_PLATFORM_ADMIN: "false"
+YAML
+}
+compose=(docker compose -f compose.yaml -f compose.vps.yaml -f compose.production-networks.yml -f compose.release-networks.yml -f compose.release-image.yml -f "$overlay")
+write_overlay "$new_ref"
+"${compose[@]}" config --quiet
+mkdir -p /var/backups/ithute-pay
+backup="/var/backups/ithute-pay/pre-release-$(date -u +%Y%m%dT%H%M%SZ).dump"
+if ! docker exec ithute-pay-postgres-1 sh -c 'exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc --no-owner --no-privileges' >"$backup"; then rm -f "$backup"; exit 1; fi
+test -s "$backup" || { rm -f "$backup"; exit 1; }
+old_rev="$(docker exec ithute-pay-ithute-pay-bridge-1 sh -c 'cd /app/backend && python -m alembic current' 2>&1)"
+echo "Backup: $backup"
+if ! "${compose[@]}" run --rm --no-deps --workdir /app/backend --entrypoint python ithute-pay-bridge -m alembic upgrade head; then echo "Migration failed; old app remains. Inspect schema before retry."; exit 1; fi
+new_rev="$("${compose[@]}" run --rm --no-deps --workdir /app/backend --entrypoint python ithute-pay-bridge -m alembic current 2>&1)"
+failed=0
+"${compose[@]}" up -d --no-deps --no-build --force-recreate ithute-pay-bridge || failed=1
+if [[ $failed == 0 ]]; then
+ for i in $(seq 1 30); do
+   actual="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}' 2>/dev/null || true)"
+   health="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.State.Health.Status}}' 2>/dev/null || true)"
+   if [[ "$actual" == "$new_id" && "$health" == healthy ]] && curl -fsS --max-time 10 https://api.pay.ithute.co.ls/health >/dev/null && curl -fsSL --max-time 15 https://portal.pay.ithute.co.ls/ >/dev/null; then echo "Release healthy"; exit 0; fi
+   sleep 5
+ done
+fi
+if [[ "$new_rev" != "$old_rev" ]]; then echo "UNSAFE TO AUTO-ROLLBACK: schema changed. Manual recovery needed; backup $backup"; exit 1; fi
+write_overlay "$old_id"
+"${compose[@]}" up -d --no-deps --no-build --force-recreate ithute-pay-bridge
+for i in $(seq 1 24); do
+ actual="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}' 2>/dev/null || true)"
+ health="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.State.Health.Status}}' 2>/dev/null || true)"
+ if [[ "$actual" == "$old_id" && "$health" == healthy ]]; then echo "Rollback succeeded"; exit 1; fi
+ sleep 5
+done
+echo "Rollback failed; operator intervention required"; exit 1
