@@ -149,6 +149,21 @@ def check_restored_financial_constraints() -> None:
         insert, (13, "tenant-beta", "new-provider-013", "new-beta-key", -1, "pending"),
         psycopg.errors.CheckViolation,
     )
+    # A tenant-scoped idempotency key may be reused by another tenant.
+    # Never persist the positive assertion into the restored fixture set.
+    with psycopg.connect(dest_dsn) as connection:
+        try:
+            connection.execute(
+                insert,
+                (14, "tenant-beta", "new-provider-014", "alpha-pay-001", 10, "pending"),
+            )
+            assert connection.execute(
+                "SELECT COUNT(*) FROM ci_financial_restore_fixtures "
+                "WHERE tenant_id = %s AND idempotency_key = %s",
+                ("tenant-beta", "alpha-pay-001"),
+            ).fetchone()[0] == 1, "Cross-tenant idempotency reuse not isolated"
+        finally:
+            connection.rollback()
 
 
 source_counts = table_row_counts(source_dsn)
@@ -251,6 +266,7 @@ if evidence_path:
         "restored_totals_match": True,
         "duplicate_provider_reference_rejected": True,
         "duplicate_tenant_idempotency_key_rejected": True,
+        "cross_tenant_idempotency_key_reuse_allowed": True,
         "negative_amount_rejected": True,
         "schema_constraints_verified": True,
         "production_data_used": False,
