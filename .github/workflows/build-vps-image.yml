@@ -285,6 +285,19 @@ jobs:
           output.write_text(json.dumps(evidence, sort_keys=True, indent=2) + "\n")
           print("Recorded non-secret, local-image rehearsal evidence")
           PY
+      - name: Independently validate saved PR rehearsal evidence
+        if: github.event_name == 'pull_request'
+        env:
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          TESTED_SHA="$(git rev-parse HEAD)"
+          python apps/backend/scripts/validate_staging_rehearsal_evidence.py \
+            staging-evidence/rehearsal.json \
+            --run-id "$GITHUB_RUN_ID" \
+            --tested-checkout-sha "$TESTED_SHA" \
+            --pr-head-sha "$PR_HEAD_SHA"
       - name: Upload offline staging rehearsal evidence
         if: github.event_name == 'pull_request'
         uses: actions/upload-artifact@v4
