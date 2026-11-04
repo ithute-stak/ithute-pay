@@ -12,6 +12,7 @@ def report():
         "source_checkout_sha": SHA,
         "github_run_id": RUN,
         "archive_sha256": "b" * 64,
+        "post_restore_archive_sha256": "b" * 64,
         "synthetic_fixture_sha256": "c" * 64,
         "restored_fixture_sha256": "c" * 64,
     }
@@ -70,4 +71,16 @@ def test_missing_fields_and_wrong_types_are_no_go():
     assert check(e)
     e = report()
     e["synthetic_records"] = True
+    assert check(e)
+
+
+def test_changed_backup_archive_and_false_stability_claim_fail_closed():
+    e = report()
+    e["post_restore_archive_sha256"] = "d" * 64
+    assert check(e)
+    e = report()
+    e["archive_unchanged_during_restore"] = False
+    assert check(e)
+    e = report()
+    e["post_restore_archive_sha256"] = "INVALID"
     assert check(e)
