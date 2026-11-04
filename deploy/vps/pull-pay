@@ -6,6 +6,7 @@ umask 077
 CONFIG="${PAY_DEPLOY_CONFIG:-/etc/ithutepay-deploy.conf}"
 [[ -r "$CONFIG" ]] || { echo "Missing $CONFIG; installation required" >&2; exit 2; }
 # Trusted root/operator-controlled configuration; never source remote input.
+# shellcheck disable=SC1090 -- operator-owned config path is resolved at runtime.
 source "$CONFIG"
 : "${PAY_DEPLOY_DIR:?PAY_DEPLOY_DIR is required}"
 : "${PAY_COMPOSE_FILES:?PAY_COMPOSE_FILES is required}"
@@ -75,7 +76,7 @@ rollback() {
 }
 check_health() {
   local i status
-  for i in $(seq 1 "${PAY_HEALTH_ATTEMPTS:-24}"); do
+  for ((i=1; i<=${PAY_HEALTH_ATTEMPTS:-24}; i++)); do
     status="$(compose ps -q "$SERVICE" | xargs -r docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' 2>/dev/null || true)"
     if [[ "$status" == healthy ]] &&
       curl -fsS --max-time 8 "$PAY_HEALTH_URL" >/dev/null &&
