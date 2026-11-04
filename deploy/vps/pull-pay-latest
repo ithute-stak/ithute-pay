@@ -12,7 +12,56 @@ docker pull ghcr.io/ithute-stak/ithute-pay:latest
 new_id="$(docker image inspect ghcr.io/ithute-stak/ithute-pay:latest --format '{{.Id}}')"
 new_ref="$(docker image inspect ghcr.io/ithute-stak/ithute-pay:latest --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep '^ghcr.io/ithute-stak/ithute-pay@sha256:' | head -1)"
 [[ "$new_ref" =~ ^ghcr.io/ithute-stak/ithute-pay@sha256:[a-f0-9]{64}$ ]] || exit 1
-if [[ "$new_id" == "$old_id" ]]; then echo "Already running latest"; exit 0; fi
+flutter_root=/home/administrator/ithutepay-flutter-phase2/apps/flutter_pay
+test -f "$flutter_root/compose.flutter-web.yml" || { echo "Missing Flutter Compose config"; exit 1; }
+flutter_old_id="$(docker inspect ithutepay-flutter-web --format '{{.Image}}')"
+docker pull ghcr.io/ithute-stak/ithute-pay-flutter:latest
+flutter_new_id="$(docker image inspect ghcr.io/ithute-stak/ithute-pay-flutter:latest --format '{{.Id}}')"
+flutter_ref="$(docker image inspect ghcr.io/ithute-stak/ithute-pay-flutter:latest --format '{{range .RepoDigests}}{{println .}}{{end}}' | grep '^ghcr.io/ithute-stak/ithute-pay-flutter@sha256:' | head -1)"
+[[ "$flutter_ref" =~ ^ghcr.io/ithute-stak/ithute-pay-flutter@sha256:[a-f0-9]{64}$ ]] || exit 1
+update_flutter() {
+ if [[ "$flutter_old_id" == "$flutter_new_id" ]]; then echo "Flutter already latest"; return 0; fi
+ local override
+ override="$(mktemp -p "$flutter_root" .flutter-release-XXXXXXXX.yaml)"
+ local fc=(docker compose -f "$flutter_root/compose.flutter-web.yml" -f "$override")
+ cat > "$override" <<YAML
+services:
+  flutter-web:
+    image: $flutter_ref
+    build: !reset null
+YAML
+ if "${fc[@]}" config --quiet && "${fc[@]}" up -d --no-deps --no-build --force-recreate flutter-web; then
+  for _ in $(seq 1 24); do
+   local actual health
+   actual="$(docker inspect ithutepay-flutter-web --format '{{.Image}}' 2>/dev/null || true)"
+   health="$(docker inspect ithutepay-flutter-web --format '{{.State.Health.Status}}' 2>/dev/null || true)"
+   if [[ "$actual" == "$flutter_new_id" && "$health" == healthy ]] && curl -fsSL --max-time 15 https://pay.ithute.co.ls/ >/dev/null; then
+    rm -f "$override"; echo "Flutter release healthy"; return 0
+   fi
+   sleep 5
+  done
+ fi
+ echo "Flutter unhealthy: restoring previous image"
+ cat > "$override" <<YAML
+services:
+  flutter-web:
+    image: $flutter_old_id
+    build: !reset null
+YAML
+ local rc=1
+ if "${fc[@]}" up -d --no-deps --no-build --force-recreate flutter-web; then
+  for _ in $(seq 1 24); do
+   local actual health
+   actual="$(docker inspect ithutepay-flutter-web --format '{{.Image}}' 2>/dev/null || true)"
+   health="$(docker inspect ithutepay-flutter-web --format '{{.State.Health.Status}}' 2>/dev/null || true)"
+   if [[ "$actual" == "$flutter_old_id" && "$health" == healthy ]]; then echo "Flutter rollback healthy"; break; fi
+   sleep 5
+  done
+ fi
+ rm -f "$override"
+ return "$rc"
+}
+if [[ "$new_id" == "$old_id" ]]; then echo "Backend already latest"; update_flutter; exit $?; fi
 overlay="$(mktemp -p . release-XXXXXXXX.yaml)"
 trap 'rm -f "$overlay"' EXIT
 write_overlay() {
@@ -49,7 +98,7 @@ if [[ $failed == 0 ]]; then
  for _ in $(seq 1 30); do
    actual="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}' 2>/dev/null || true)"
    health="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.State.Health.Status}}' 2>/dev/null || true)"
-   if [[ "$actual" == "$new_id" && "$health" == healthy ]] && curl -fsS --max-time 10 https://api.pay.ithute.co.ls/health >/dev/null && curl -fsSL --max-time 15 https://portal.pay.ithute.co.ls/ >/dev/null; then echo "Release healthy"; exit 0; fi
+   if [[ "$actual" == "$new_id" && "$health" == healthy ]] && curl -fsS --max-time 10 https://api.pay.ithute.co.ls/health >/dev/null && curl -fsSL --max-time 15 https://portal.pay.ithute.co.ls/ >/dev/null; then echo "Backend + portal healthy"; update_flutter; echo "ALL SERVICES HEALTHY"; exit 0; fi
    sleep 5
  done
 fi
