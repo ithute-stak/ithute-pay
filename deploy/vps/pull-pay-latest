@@ -46,7 +46,7 @@ new_rev="$("${compose[@]}" run --rm --no-deps --workdir /app/backend --entrypoin
 failed=0
 "${compose[@]}" up -d --no-deps --no-build --force-recreate ithute-pay-bridge || failed=1
 if [[ $failed == 0 ]]; then
- for i in $(seq 1 30); do
+ for _ in $(seq 1 30); do
    actual="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}' 2>/dev/null || true)"
    health="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.State.Health.Status}}' 2>/dev/null || true)"
    if [[ "$actual" == "$new_id" && "$health" == healthy ]] && curl -fsS --max-time 10 https://api.pay.ithute.co.ls/health >/dev/null && curl -fsSL --max-time 15 https://portal.pay.ithute.co.ls/ >/dev/null; then echo "Release healthy"; exit 0; fi
@@ -56,7 +56,7 @@ fi
 if [[ "$new_rev" != "$old_rev" ]]; then echo "UNSAFE TO AUTO-ROLLBACK: schema changed. Manual recovery needed; backup $backup"; exit 1; fi
 write_overlay "$old_id"
 "${compose[@]}" up -d --no-deps --no-build --force-recreate ithute-pay-bridge
-for i in $(seq 1 24); do
+for _ in $(seq 1 24); do
  actual="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.Image}}' 2>/dev/null || true)"
  health="$(docker inspect ithute-pay-ithute-pay-bridge-1 --format '{{.State.Health.Status}}' 2>/dev/null || true)"
  if [[ "$actual" == "$old_id" && "$health" == healthy ]]; then echo "Rollback succeeded"; exit 1; fi
