@@ -104,7 +104,7 @@ check_health() {
     if [[ "$status" == healthy ]] &&
       curl -fsS --max-time 8 "$PAY_HEALTH_URL" >/dev/null &&
       curl -fsS --max-time 8 "$PAY_API_URL" >/dev/null &&
-      curl -fsS --max-time 8 "$PAY_PORTAL_URL" >/dev/null; then return 0; fi
+      curl -fsSL --max-redirs 5 --proto-redir =https --max-time 12 "$PAY_PORTAL_URL" >/dev/null; then return 0; fi
     sleep 5
   done
   return 1
