@@ -246,6 +246,9 @@ jobs:
           assert re.fullmatch(r"[0-9a-f]{40}", checkout)
           assert re.fullmatch(r"[0-9a-f]{40}", os.environ["PR_HEAD_SHA"])
           assert re.fullmatch(r"sha-[0-9a-f]{40}", image_tag)
+          # GitHub tests an ephemeral merge commit by default on pull_request.
+          # A passing rehearsal must never be attached to a different SHA tag.
+          assert image_tag == "sha-" + checkout, "NO-GO: Docker tag differs from tested checkout"
           assert re.fullmatch(r"sha256:[0-9a-f]{64}", image_id)
           evidence = {
               "kind": "ithutepay_offline_pr_container_rehearsal",
@@ -253,6 +256,8 @@ jobs:
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "tested_checkout_sha": checkout,
               "pr_head_sha": os.environ["PR_HEAD_SHA"],
+              "checkout_kind": "pull_request_merge_ref",
+              "image_tag_matches_tested_checkout": True,
               "local_image_reference": image_ref,
               "local_image_id": image_id,
               "migration": "explicit_upgrade_and_current_head_check_passed",
