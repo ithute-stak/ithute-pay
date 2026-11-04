@@ -138,3 +138,12 @@ the original M-PESA, push, reconciliation and auto-migration controls. These
 attestations must match the actual staging Compose/runtime settings. The
 validator cannot itself prove those settings were applied in a running
 environment. Existing production settings remain unchanged.
+
+
+  The synthetic recovery smoke also compares per-tenant, per-status totals in
+  integer minor units and verifies restored database constraints by attempting
+  duplicate provider references, duplicate tenant-scoped idempotency keys and
+  negative amounts. Each deliberate failing insertion is rolled back; the
+  fixture fingerprint is checked again afterward. These tests prove the
+  **synthetic CI schema and its sample values**, not a reconciliation of
+  production balances or proof of real customer data recovery.
