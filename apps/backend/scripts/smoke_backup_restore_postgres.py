@@ -56,12 +56,13 @@ with psycopg.connect(source_dsn) as connection:
         (3, "tenant-beta", "synthetic-mpesa-003", "beta-pay-001", 98555, "failed"),
         (4, "tenant-beta", "synthetic-golink-004", "beta-pay-002", 100, "reversed"),
     )
-    connection.executemany(
-        "INSERT INTO ci_financial_restore_fixtures "
-        "(id, tenant_id, provider_reference, idempotency_key, amount_minor, status) "
-        "VALUES (%s, %s, %s, %s, %s, %s)",
-        rows,
-    )
+    with connection.cursor() as cursor:
+        cursor.executemany(
+            "INSERT INTO ci_financial_restore_fixtures "
+            "(id, tenant_id, provider_reference, idempotency_key, amount_minor, status) "
+            "VALUES (%s, %s, %s, %s, %s, %s)",
+            rows,
+        )
 
 with psycopg.connect(source_dsn, autocommit=True) as connection:
     connection.execute("CREATE DATABASE ithute_restore_smoke")
