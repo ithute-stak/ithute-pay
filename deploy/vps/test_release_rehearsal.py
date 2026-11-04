@@ -33,7 +33,9 @@ elif args[:2] == ["ps", "-aq"]:
     print("mock-container")
 elif args and args[0] == "inspect" and "mock-container" in args:
     fmt = " ".join(args)
-    if ".Image" in fmt:
+    if ".Id" in fmt:
+        print("c" * 64)
+    elif ".Image" in fmt:
         print(s["running_image"])
     elif ".State.Running" in fmt:
         print("true")
