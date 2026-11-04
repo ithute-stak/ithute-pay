@@ -21,6 +21,8 @@ on:
       - 'apps/frontend/**'
       - 'deploy/container/**'
       - 'deploy/staging/**'
+      - 'deploy/vps/**'
+      - '.github/workflows/deploy-script-guard.yml'
       - '.github/workflows/build-vps-image.yml'
   workflow_dispatch:
 

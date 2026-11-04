@@ -1,0 +1,28 @@
+name: Verify image-only production deployer
+on:
+  pull_request:
+    paths:
+      - 'deploy/vps/**'
+      - '.github/workflows/deploy-script-guard.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/vps/**'
+      - '.github/workflows/deploy-script-guard.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  verify-deployer:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - name: Shell syntax
+        run: bash -n deploy/vps/pull-pay
+      - name: ShellCheck
+        run: shellcheck --severity=warning deploy/vps/pull-pay
+      - name: Guard deployment invariants
+        run: python3 -m unittest discover -s deploy/vps -p 'test_*.py' -v
