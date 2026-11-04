@@ -13,7 +13,28 @@ from typing import Mapping
 
 IMAGE = re.compile(r"^ghcr\.io/ithute-stak/ithute-pay@sha256:[0-9a-f]{64}$")
 COMMIT = re.compile(r"^[0-9a-f]{40}$")
-TRUTHY = {"true", "1", "yes", "on"}
+# The manifest is a strictly typed, non-secret attestation document.
+# Unknown fields are rejected, including nested fields, to avoid accidental
+# credential disclosure when a release report is shared or uploaded.
+ROOT_FIELDS = frozenset({
+    "environment", "git_commit", "ci_verified_commit",
+    "image_source_commit", "image", "gates", "switches",
+})
+GATE_FIELDS = frozenset({
+    "financial_integrity", "tenant_browser", "real_postgres_integration",
+    "provider_offline", "vps_image_build", "database_backup_restored",
+    "staging_migrations_reviewed",
+})
+REQUIRED_FALSE = frozenset({
+    "RUN_MIGRATIONS_ON_START", "RUN_BACKGROUND_JOBS", "MPESA_ENABLED",
+    "ITHUTE_PUSH_ENABLED", "ITHUTE_RECON_PUSH_DISPATCH_ENABLED",
+    "GOLINK_COLLECTIONS_ENABLED", "GOLINK_RECONCILIATION_ENABLED",
+    "AUTO_CREATE_PLATFORM_ADMIN", "SANDBOX_TEST_LAB_ENABLED",
+})
+SWITCH_FIELDS = REQUIRED_FALSE | {
+    "MPESA_MODE", "MPESA_ENVIRONMENT", "ENVIRONMENT", "DEBUG",
+}
+DISABLED = {"false", "0", "no", "off"}
 
 
 class UnsafeStagingConfiguration(ValueError):
@@ -34,28 +55,34 @@ def validate_manifest(manifest: Mapping[str, object]) -> list[str]:
     if manifest.get("ci_verified_commit") != manifest.get("git_commit"):
         errors.append("ci_verified_commit must match git_commit")
 
+    for name in manifest:
+        if name not in ROOT_FIELDS:
+            errors.append("manifest has unrecognised top-level fields")
+            break
+
     gates = manifest.get("gates")
     if not isinstance(gates, dict):
+        errors.append("gates must be an object")
         gates = {}
-    for key in (
-        "financial_integrity", "tenant_browser", "real_postgres_integration",
-        "provider_offline", "vps_image_build", "database_backup_restored",
-        "staging_migrations_reviewed",
-    ):
+    for name in gates:
+        if name not in GATE_FIELDS:
+            errors.append("gates has unrecognised fields")
+            break
+    for key in sorted(GATE_FIELDS):
         if gates.get(key) is not True:
             errors.append(f"gates.{key} must be explicitly confirmed true")
 
     switches = manifest.get("switches")
     if not isinstance(switches, dict):
+        errors.append("switches must be an object")
         switches = {}
-    required_false = (
-        "RUN_MIGRATIONS_ON_START", "RUN_BACKGROUND_JOBS", "MPESA_ENABLED", "ITHUTE_PUSH_ENABLED",
-        "ITHUTE_RECON_PUSH_DISPATCH_ENABLED", "GOLINK_RECONCILIATION_ENABLED",
-        "AUTO_CREATE_PLATFORM_ADMIN",
-    )
-    for key in required_false:
+    for name in switches:
+        if name not in SWITCH_FIELDS:
+            errors.append("switches has unrecognised fields")
+            break
+    for key in sorted(REQUIRED_FALSE):
         value = switches.get(key)
-        if not isinstance(value, str) or value.strip().lower() not in {"false", "0", "no", "off"}:
+        if not isinstance(value, str) or value.strip().lower() not in DISABLED:
             errors.append(f"switches.{key} must be explicitly disabled")
     if switches.get("MPESA_MODE") != "simulator":
         errors.append("switches.MPESA_MODE must be simulator")
@@ -63,15 +90,12 @@ def validate_manifest(manifest: Mapping[str, object]) -> list[str]:
         errors.append("switches.MPESA_ENVIRONMENT must be sandbox")
     if switches.get("ENVIRONMENT") != "staging":
         errors.append("switches.ENVIRONMENT must be staging")
-    if switches.get("DEBUG") not in {"false", "0", "no", "off"}:
+    debug = switches.get("DEBUG")
+    if not isinstance(debug, str) or debug.strip().lower() not in DISABLED:
         errors.append("switches.DEBUG must be disabled")
 
-    # Explicitly disallow secrets from being embedded in the manifest.
-    forbidden = {"DATABASE_URL", "SECRET_KEY", "DATA_ENCRYPTION_KEY",
-                 "MPESA_API_KEY", "MPESA_PUBLIC_KEY", "GOLINK_API_KEY",
-                 "GOLINK_WEBHOOK_SECRET", "BOOTSTRAP_ADMIN_PASSWORD"}
-    if any(name in manifest or name in switches for name in forbidden):
-        errors.append("release manifest must not include secret fields")
+    # No payload or unknown field name is ever included in error text.
+    # Forbid arbitrary nested objects through the closed schema.
     return errors
 
 
