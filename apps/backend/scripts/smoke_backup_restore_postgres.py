@@ -210,4 +210,44 @@ with create_engine(dest, pool_pre_ping=True).connect() as db:
     assert inspector.has_table("reconciliation_items")
     assert inspector.has_table("provider_transactions")
 
+# Optional CI-only report; no DSNs, passwords, personal data or provider keys.
+# The fingerprint covers fixed synthetic fixture values, not actual payment records.
+evidence_path = os.environ.get("CI_RESTORE_EVIDENCE_PATH")
+if evidence_path:
+    from pathlib import Path
+    git_sha = os.environ.get("GITHUB_SHA", "")
+    run_id = os.environ.get("GITHUB_RUN_ID", "")
+    import re
+    assert re.fullmatch(r"[0-9a-f]{40}", git_sha), "CI checkout SHA required"
+    assert re.fullmatch(r"[1-9][0-9]*", run_id), "CI run ID required"
+    report = {
+        "kind": "ithutepay_disposable_postgres_restore",
+        "result": "passed",
+        "source_checkout_sha": git_sha,
+        "github_run_id": run_id,
+        "source_database_class": "isolated_local_ci",
+        "restored_database_class": "isolated_local_ci",
+        "archive_sha256": archive_sha256,
+        "synthetic_fixture_sha256": source_fingerprint,
+        "restored_fixture_sha256": restored_fingerprint,
+        "synthetic_records": source_counts["ci_financial_restore_fixtures"],
+        "tenant_record_counts": source_tenants,
+        "tenant_status_minor_unit_totals": {
+            f"{tenant}/{status}": amount
+            for (tenant, status), (_, amount) in sorted(source_totals.items())
+        },
+        "restored_counts_match": True,
+        "restored_totals_match": True,
+        "duplicate_provider_reference_rejected": True,
+        "duplicate_tenant_idempotency_key_rejected": True,
+        "negative_amount_rejected": True,
+        "schema_constraints_verified": True,
+        "production_data_used": False,
+        "historical_data_recovery_certified": False,
+        "deployment_performed": False,
+    }
+    path = Path(evidence_path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, sort_keys=True, indent=2) + "\\n", encoding="utf-8")
+
 print("Disposable PostgreSQL archive integrity, synthetic financial fingerprint, tenant/status totals, duplicate-prevention, amount constraints and migration: PASS")
