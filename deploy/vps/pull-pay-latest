@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 umask 077
 [[ $# == 2 && "$1" == pay && "$2" == latest ]] || { echo "Usage: sudo pull pay latest"; exit 2; }
-[[ $EUID == 0 ]] || { echo "Run with sudo"; exit 2; }
+if [[ $EUID != 0 ]]; then exec sudo /usr/local/bin/pull "$@"; fi
 cd /home/administrator/ithute-pay
 exec 9>/run/lock/ithutepay-release.lock
 flock -n 9 || exit 1
