@@ -6,7 +6,8 @@ umask 077
 CONFIG="${PAY_DEPLOY_CONFIG:-/etc/ithutepay-deploy.conf}"
 [[ -r "$CONFIG" ]] || { echo "Missing $CONFIG; installation required" >&2; exit 2; }
 # Trusted root/operator-controlled configuration; never source remote input.
-# shellcheck disable=SC1090 -- operator-owned config path is resolved at runtime.
+# Operator-owned config path resolved at runtime.
+# shellcheck disable=SC1090
 source "$CONFIG"
 : "${PAY_DEPLOY_DIR:?PAY_DEPLOY_DIR is required}"
 : "${PAY_COMPOSE_FILES:?PAY_COMPOSE_FILES is required}"
