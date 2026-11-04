@@ -1,11 +1,11 @@
-# Builds only the Flutter web client. The existing payment API, workers, and
-# merchant portal are not part of this image.
+# Isolated Flutter web client: no payment processing or secrets.
 FROM ghcr.io/cirruslabs/flutter:stable AS build
 WORKDIR /src
 RUN flutter config --enable-web && flutter create --platforms=web --project-name ithutepay_mobile .
 COPY pubspec.yaml ./pubspec.yaml
 COPY lib/ ./lib/
-RUN flutter pub get && flutter build web --release
+COPY test/ ./test/
+RUN flutter pub get && flutter test && flutter build web --release
 
 FROM nginx:1.27-alpine
 COPY nginx.conf /etc/nginx/conf.d/default.conf
