@@ -33,7 +33,9 @@ def safe_manifest():
             "MPESA_ENVIRONMENT": "sandbox",
             "ITHUTE_PUSH_ENABLED": "false",
             "ITHUTE_RECON_PUSH_DISPATCH_ENABLED": "false",
+            "GOLINK_COLLECTIONS_ENABLED": "false",
             "GOLINK_RECONCILIATION_ENABLED": "false",
+            "SANDBOX_TEST_LAB_ENABLED": "false",
             "AUTO_CREATE_PLATFORM_ADMIN": "false",
         },
     }
@@ -82,3 +84,45 @@ def test_secret_keys_are_never_echoed_in_failure_message():
     manifest["switches"]["MPESA_API_KEY"] = "do-not-print-secret-123"
     errors = validate_manifest(manifest)
     assert errors and "do-not-print-secret-123" not in repr(errors)
+
+
+def test_unknown_nested_fields_are_rejected_without_echoing_secret_values():
+    manifest = safe_manifest()
+    secret = "private-production-token-do-not-print"
+    manifest["gates"]["unexpected_attachment"] = {"DATABASE_URL": secret}
+    manifest["switches"]["unreviewed_override"] = {"MPESA_API_KEY": secret}
+    manifest["configuration"] = {"credentials": {"GOLINK_API_KEY": secret}}
+    errors = validate_manifest(manifest)
+    assert sum("unrecognised" in error for error in errors) == 3
+    assert secret not in repr(errors)
+    assert "DATABASE_URL" not in repr(errors)
+    assert "MPESA_API_KEY" not in repr(errors)
+
+
+def test_unapproved_provider_and_test_lab_flags_fail_closed():
+    manifest = safe_manifest()
+    manifest["switches"]["GOLINK_COLLECTIONS_ENABLED"] = "true"
+    manifest["switches"]["SANDBOX_TEST_LAB_ENABLED"] = "true"
+    errors = validate_manifest(manifest)
+    assert any("GOLINK_COLLECTIONS_ENABLED" in error for error in errors)
+    assert any("SANDBOX_TEST_LAB_ENABLED" in error for error in errors)
+
+
+def test_non_string_debug_and_missing_structural_objects_rejected():
+    manifest = safe_manifest()
+    manifest["switches"]["DEBUG"] = False
+    assert any("DEBUG" in error for error in validate_manifest(manifest))
+    manifest["switches"] = []
+    manifest["gates"] = []
+    errors = validate_manifest(manifest)
+    assert any("switches must be an object" in error for error in errors)
+    assert any("gates must be an object" in error for error in errors)
+
+
+def test_failure_does_not_reveal_unrecognized_key_or_nested_payload():
+    manifest = safe_manifest()
+    manifest["secret-field-name-internal"] = {"raw": "secret-value-private"}
+    errors = validate_manifest(manifest)
+    assert errors
+    assert "secret-field-name-internal" not in repr(errors)
+    assert "secret-value-private" not in repr(errors)
