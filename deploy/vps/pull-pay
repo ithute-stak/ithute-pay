@@ -57,6 +57,14 @@ OLD_CONTAINER="$(compose ps -q "$SERVICE")"
 [[ -n "$OLD_CONTAINER" ]] || { echo "App container not found; refusing first-time install" >&2; exit 1; }
 OLD_IMAGE_ID="$(docker inspect "$OLD_CONTAINER" --format '{{.Image}}')"
 [[ "$OLD_IMAGE_ID" == sha256:* ]] || exit 1
+# The last production release-image overlay pins a fixed registry digest.
+# Add an ephemeral final overlay to select exactly the captured candidate image,
+# without changing any of the five operator-managed production Compose files.
+cat >>"$OVERRIDE" <<'YAML'
+    image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}
+YAML
+export IPB_IMAGE="$OLD_IMAGE_ID"
+compose config --quiet
 OLD_STATE="$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')"
 [[ "$OLD_STATE" == true ]] || { echo "Old app is not running; refusing update" >&2; exit 1; }
 # Image IDs are valid Docker image references locally and survive tag movements.
