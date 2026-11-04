@@ -164,3 +164,12 @@ states that production records were not used, historical data recovery was
 not certified, and no deployment occurred. A future controlled staging
 restore of representative, appropriately sanitized data needs separate
 authorization and evidence.
+
+
+The disposable PostgreSQL recovery artifact now also has a **closed-schema**
+validator at `apps/backend/scripts/validate_disposable_restore_evidence.py`.
+CI refuses to upload reports with unknown or nested secret fields, a mismatched
+GitHub run/commit, malformed SHA-256 fingerprints, altered synthetic minor-unit
+totals, or unsupported claims of production-data restoration. The test
+validator runs in the isolated staging preflight as well. A passing report
+documents synthetic CI recovery only, never actual operational restore signoff.
