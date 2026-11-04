@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'widgets/backend_status_card.dart';
+import 'widgets/account_page.dart';
 
 void main() => runApp(const IthutePayApp());
 
@@ -49,7 +50,9 @@ class _PayHomePageState extends State<PayHomePage> {
     final wide = MediaQuery.sizeOf(context).width >= 760;
     final content = _selected == 0
         ? const _HomeContent()
-        : _InformationPage(
+        : _selected == 3
+            ? const AccountPage()
+            : _InformationPage(
             icon: _icons[_selected],
             title: _labels[_selected],
             message: 'This section will be available after secure account '
