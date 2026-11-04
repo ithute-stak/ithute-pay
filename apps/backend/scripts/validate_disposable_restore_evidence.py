@@ -21,7 +21,8 @@ FIELDS = frozenset({
     "synthetic_records", "tenant_record_counts",
     "tenant_status_minor_unit_totals", "restored_counts_match",
     "restored_totals_match", "duplicate_provider_reference_rejected",
-    "duplicate_tenant_idempotency_key_rejected", "negative_amount_rejected",
+    "duplicate_tenant_idempotency_key_rejected",
+    "cross_tenant_idempotency_key_reuse_allowed", "negative_amount_rejected",
     "schema_constraints_verified", "production_data_used",
     "historical_data_recovery_certified", "deployment_performed",
 })
@@ -43,6 +44,7 @@ FIXED = {
     "restored_totals_match": True,
     "duplicate_provider_reference_rejected": True,
     "duplicate_tenant_idempotency_key_rejected": True,
+    "cross_tenant_idempotency_key_reuse_allowed": True,
     "negative_amount_rejected": True,
     "schema_constraints_verified": True,
     "production_data_used": False,
