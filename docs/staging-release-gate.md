@@ -173,3 +173,15 @@ GitHub run/commit, malformed SHA-256 fingerprints, altered synthetic minor-unit
 totals, or unsupported claims of production-data restoration. The test
 validator runs in the isolated staging preflight as well. A passing report
 documents synthetic CI recovery only, never actual operational restore signoff.
+
+
+### Backup archive stability through restore
+
+The isolated recovery rehearsal now hashes the custom-format PostgreSQL
+archive before and after `pg_restore`, refusing success if the two SHA-256
+values differ. Both fingerprints and a strict true/false integrity result
+are recorded in the non-secret recovery report. The closed-schema validator
+independently rejects an altered fingerprint, unknown fields or a false
+stability claim. This detects archive changes during the **same disposable CI
+restore**, but does not independently attest archived production backups or
+guarantee disaster recovery.
