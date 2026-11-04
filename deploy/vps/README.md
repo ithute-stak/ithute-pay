@@ -8,20 +8,28 @@ This deployer does **not** perform `git pull`, `docker build`, `pip install`, or
 
 ## One-time setup on the VPS (review and adapt existing Compose paths first)
 
+The VPS already has a `pull` launcher for `ithute` and `loanhub`. **Do not overwrite that executable**. The additive Bash function below intercepts only `pull pay latest` and delegates all other requests back to the original command. First inspect `type -a pull` and confirm the active shell is Bash. If another shell or a centrally managed launcher is used, integrate its dispatcher separately; do not blindly install the Bash function.
+
 Install this script from the reviewed/merged commit (do not run unreviewed code from a feature branch on production). Downloading the **deployment utility once** is different from fetching/building application source for releases.
 
 ```bash
 sudo install -d -m 0755 /opt/ithutepay-deploy
 # Transfer the reviewed deploy/vps/pull-pay file to /opt/ithutepay-deploy/pull-pay
 sudo install -m 0755 pull-pay /opt/ithutepay-deploy/pull-pay
-sudo tee /usr/local/bin/pull >/dev/null <<'SH'
-#!/bin/sh
-[ "$#" -eq 2 ] && [ "$1" = pay ] && [ "$2" = latest ] || {
-  echo 'Usage: pull pay latest' >&2; exit 2;
+# Do not overwrite the existing /usr/local/bin/pull launcher; it already handles
+# LoanHub and Ithute and must remain unchanged.
+# For interactive Bash, add the following shell function to ~/.bashrc once:
+cat >> ~/.bashrc <<'SH'
+pull() {
+  if [ "$#" -eq 2 ] && [ "$1" = pay ] && [ "$2" = latest ]; then
+    sudo /opt/ithutepay-deploy/pull-pay latest
+  else
+    command pull "$@"
+  fi
 }
-exec sudo /opt/ithutepay-deploy/pull-pay latest
 SH
-sudo chmod 0755 /usr/local/bin/pull
+# After reviewing and installing the actual deployer:
+source ~/.bashrc
 ```
 
 Create an operator-owned configuration file. **Replace the sample paths and public endpoints with the currently deployed, working ones.** File list must include **all** current production Compose overlays, including the existing production network and volumes overlays if applicable; do not create a new Compose project or new DB volumes.
