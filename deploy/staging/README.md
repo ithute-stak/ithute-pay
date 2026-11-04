@@ -179,3 +179,17 @@ the workflow file to be present on the repository's default branch. While PR
 #8 remains draft and unmerged, this manual verifier may not be dispatchable.
 Do not merge or publish merely to make it dispatchable; obtain approval for
 the release process first.
+
+
+### Candidate image SHA provenance
+
+The PR rehearsal uses GitHub Actions' checked-out commit, which can be a
+temporary pull-request merge commit rather than the PR branch-head SHA.
+The evidence records **both** SHA values separately. It now refuses to
+certify the local image unless its SHA tag exactly matches
+`git rev-parse HEAD` in the runner. The PR head SHA is included for
+traceability, not misrepresented as the tested image's source revision.
+
+This is only local tag-to-checkout consistency. Tags and OCI labels are not
+cryptographic attestations; a GHCR digest, provenance review and authorised
+release remain independent requirements.
