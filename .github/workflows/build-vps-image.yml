@@ -177,6 +177,17 @@ jobs:
           docker compose -f deploy/staging/compose.yaml run --rm --no-deps \
             --workdir /app/backend --entrypoint python app -m alembic upgrade head
           docker compose -f deploy/staging/compose.yaml up -d app
+          # Verify the effective running app uses exactly the locally built PR image.
+          APP_CONTAINER="$(docker compose -f deploy/staging/compose.yaml ps -q app)"
+          test -n "$APP_CONTAINER"
+          EXPECTED_IMAGE_ID="$(docker image inspect "$STAGING_IMAGE" --format '{{.Id}}')"
+          RUNNING_IMAGE_ID="$(docker container inspect "$APP_CONTAINER" --format '{{.Image}}')"
+          [[ "$EXPECTED_IMAGE_ID" =~ ^sha256:[0-9a-f]{64}$ ]]
+          test "$RUNNING_IMAGE_ID" = "$EXPECTED_IMAGE_ID" || {
+            echo "NO-GO: running staging container is not the tested PR image"
+            exit 1
+          }
+          echo "Actual running staging container image ID matches built PR image"
           # Refuse to certify staging if its schema is behind Alembic head.
           docker compose -f deploy/staging/compose.yaml exec -T \
             --workdir /app/backend app python -m alembic current --check
