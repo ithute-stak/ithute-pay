@@ -25,6 +25,9 @@ class DeployGuardTests(unittest.TestCase):
 
     def test_previous_image_retained_for_rollback(self):
         self.assertIn('OLD_IMAGE_ID="$(docker inspect', source)
+        self.assertIn('--filter "label=com.docker.compose.project=$PROJECT"', source)
+        self.assertIn('--filter "label=com.docker.compose.service=$SERVICE"', source)
+        self.assertIn('RESOLVED_CONTAINER="$(compose ps -aq "$SERVICE")"', source)
         self.assertIn('export IPB_IMAGE="$OLD_IMAGE_ID"', source)
         self.assertIn('trap rollback ERR', source)
 
