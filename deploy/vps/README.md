@@ -8,28 +8,86 @@ This deployer does **not** perform `git pull`, `docker build`, `pip install`, or
 
 ## One-time setup on the VPS (review and adapt existing Compose paths first)
 
-The VPS already has a `pull` launcher for `ithute` and `loanhub`. **Do not overwrite that executable**. The additive Bash function below intercepts only `pull pay latest` and delegates all other requests back to the original command. First inspect `type -a pull` and confirm the active shell is Bash. If another shell or a centrally managed launcher is used, integrate its dispatcher separately; do not blindly install the Bash function.
+The VPS launcher is `/usr/local/bin/pull`, a Bash dispatcher that resolves the exact `main` commit and downloads a single deployment helper. **Keep the existing `ithute` and `loanhub` entries unchanged.** Extend that dispatcher **only after PR approval, staging verification, and merge**. The IthutePay helper lives at `deploy/vps/pull-pay` on `main`. It expects `latest` as its only argument and runs as root, like the LoanHub helper.
 
-Install this script from the reviewed/merged commit (do not run unreviewed code from a feature branch on production). Downloading the **deployment utility once** is different from fetching/building application source for releases.
+After the PR merges and the root-owned configuration below is installed, use this **one-time idempotent patch** on the VPS. This is not part of the regular application deployment; regular `pull pay latest` fetches the exact-commit helper and pulls a GHCR image, not application source.
 
 ```bash
-sudo install -d -m 0755 /opt/ithutepay-deploy
-# Transfer the reviewed deploy/vps/pull-pay file to /opt/ithutepay-deploy/pull-pay
-sudo install -m 0755 pull-pay /opt/ithutepay-deploy/pull-pay
-# Do not overwrite the existing /usr/local/bin/pull launcher; it already handles
-# LoanHub and Ithute and must remain unchanged.
-# For interactive Bash, add the following shell function to ~/.bashrc once:
-cat >> ~/.bashrc <<'SH'
-pull() {
-  if [ "$#" -eq 2 ] && [ "$1" = pay ] && [ "$2" = latest ]; then
-    sudo /opt/ithutepay-deploy/pull-pay latest
-  else
-    command pull "$@"
-  fi
-}
-SH
-# After reviewing and installing the actual deployer:
-source ~/.bashrc
+sudo python3 - <<'PY'
+from pathlib import Path
+import shutil
+import subprocess
+from datetime import datetime, timezone
+
+path = Path("/usr/local/bin/pull")
+original = path.read_text()
+if '  pay)\n' in original:
+    print("pay routing already installed")
+    raise SystemExit(0)
+
+# Fail closed if the operator-owned launcher has changed unexpectedly.
+expected_ithute = '''  ithute)
+    REPO="ithute-stak/ithute"
+    HELPER_PATH="scripts/deploy-production-latest.sh"
+    HELPER_NAME="deploy-production-latest.sh"
+    PREFIX="Ithute"
+    ;;
+'''
+expected_dispatch = '''  loanhub)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "[LoanHub] Elevating production deployment launcher"
+      exec sudo bash "$helper" latest
+    fi
+    exec bash "$helper" latest
+    ;;
+esac
+'''
+if original.count(expected_ithute) != 1 or original.count(expected_dispatch) != 1:
+    raise SystemExit("Existing launcher changed: no patch applied")
+
+updated = original.replace(
+    expected_ithute,
+    expected_ithute + '''  pay)
+    REPO="ithute-stak/ithute-pay"
+    HELPER_PATH="deploy/vps/pull-pay"
+    HELPER_NAME="pull-pay"
+    PREFIX="IthutePay"
+    ;;
+''',
+    1,
+).replace(
+    expected_dispatch,
+    expected_dispatch.replace('esac', '''  pay)
+    if [ "$(id -u)" -ne 0 ]; then
+      echo "[IthutePay] Elevating production deployment launcher"
+      exec sudo bash "$helper" latest
+    fi
+    exec bash "$helper" latest
+    ;;
+esac'''),
+    1,
+).replace('Usage: pull {ithute|loanhub} latest', 'Usage: pull {ithute|loanhub|pay} latest')
+
+temp = path.with_name("pull.candidate")
+temp.write_text(updated)
+temp.chmod(0o755)
+try:
+    subprocess.run(["bash", "-n", str(temp)], check=True)
+    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    backup = path.with_name(f"pull.backup.{stamp}")
+    shutil.copy2(path, backup)
+    temp.replace(path)
+    print(f"Installed pay route; previous launcher saved at {backup}")
+finally:
+    temp.unlink(missing_ok=True)
+PY
+```
+
+Test dispatcher argument rejection without touching running containers:
+
+```bash
+pull pay invalid  # must show Usage, must not deploy
+pull loanhub invalid  # must show Usage, must not deploy
 ```
 
 Create an operator-owned configuration file. **Replace the sample paths and public endpoints with the currently deployed, working ones.** File list must include **all** current production Compose overlays, including the existing production network and volumes overlays if applicable; do not create a new Compose project or new DB volumes.
@@ -47,7 +105,7 @@ CONFIG
 sudo chmod 0600 /etc/ithutepay-deploy.conf
 ```
 
-**Observed on VPS November 4, 2026:** The running ithute-pay project reports the five Compose files above, in that order; keep all five until an operator verifies the complete effective config. Verify that the release-image overlay accepts the IPB_IMAGE override and that the active project and volume names stay unchanged. **Important:** The paths above are examples; the real VPS might use `.env.production` and/or other Compose files. Preserve the exact production Compose project name and all overlays. Verify `docker compose --env-file ... -f ... config` resolves the existing data volumes and networks before installing this command. `PAY_ENV_FILE` must contain the `DB_PASSWORD` and other values already used by the running stack. The script intentionally refuses initial installation; a currently healthy running app is required.
+**Observed on VPS November 4, 2026:** The running ithute-pay project reports the five Compose files above, in that order; keep all five until an operator verifies the complete effective config. The final temporary Compose overlay explicitly overrides the hard-pinned `compose.release-image.yml` image and sets `RUN_MIGRATIONS_ON_START=false`. Confirm the effective app image, project and volume names against the live stack in a staging rehearsal. **Important:** The paths above are examples; the real VPS might use `.env.production` and/or other Compose files. Preserve the exact production Compose project name and all overlays. Verify `docker compose --env-file ... -f ... config` resolves the existing data volumes and networks before installing this command. `PAY_ENV_FILE` must contain the `DB_PASSWORD` and other values already used by the running stack. The script intentionally refuses initial installation; a currently healthy running app is required.
 
 For a release **with no pending Alembic migrations**, deploy with:
 
