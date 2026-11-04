@@ -147,3 +147,20 @@ environment. Existing production settings remain unchanged.
   fixture fingerprint is checked again afterward. These tests prove the
   **synthetic CI schema and its sample values**, not a reconciliation of
   production balances or proof of real customer data recovery.
+
+
+### Auditable disposable restore evidence
+
+The financial-integrity workflow now emits
+`ithutepay-disposable-restore-evidence` only after the disposable PostgreSQL
+recovery check succeeds. Its JSON captures the exact GitHub run and checkout,
+backup archive SHA-256, synthetic financial values' source/restore SHA-256
+fingerprints, per-tenant counts and minor-unit totals, and the constraint
+checks performed. The workflow independently validates the expected fields
+before uploading the artifact.
+
+This is **synthetic CI recovery evidence only**. The artifact explicitly
+states that production records were not used, historical data recovery was
+not certified, and no deployment occurred. A future controlled staging
+restore of representative, appropriately sanitized data needs separate
+authorization and evidence.
