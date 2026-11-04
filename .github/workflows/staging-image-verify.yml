@@ -53,6 +53,7 @@ jobs:
         env:
           COMMIT_SHA: ${{ inputs.commit_sha }}
           IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
         run: |
           set -euo pipefail
           IMAGE="ghcr.io/ithute-stak/ithute-pay@$IMAGE_DIGEST"
@@ -90,6 +91,7 @@ jobs:
               "kind": "ithutepay_read_only_ghcr_image_verification",
               "result": "passed",
               "approved_commit": os.environ["COMMIT_SHA"],
+              "github_run_id": os.environ["GITHUB_RUN_ID"],
               "verified_registry_reference": image,
               "local_image_id": details["Id"],
               "registry_image_published": True,
@@ -106,6 +108,18 @@ jobs:
           echo "READ-ONLY REGISTRY VERIFICATION PASSED"
           echo "A digest and image revision label match is not cryptographic SLSA attestation verification."
           echo "No registry publication, container execution, migration or deployment occurred."
+      - name: Independently validate registry evidence
+        env:
+          COMMIT_SHA: ${{ inputs.commit_sha }}
+          IMAGE_DIGEST: ${{ inputs.image_digest }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          python apps/backend/scripts/validate_staging_registry_evidence.py \
+            image-verification-evidence/registry-verification.json \
+            --commit "$COMMIT_SHA" \
+            --digest "$IMAGE_DIGEST" \
+            --run-id "$GITHUB_RUN_ID"
       - name: Upload non-secret registry verification evidence
         uses: actions/upload-artifact@v4
         with:
