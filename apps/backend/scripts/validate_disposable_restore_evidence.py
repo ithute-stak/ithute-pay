@@ -16,6 +16,7 @@ RUN = re.compile(r"[1-9][0-9]*\Z")
 FIELDS = frozenset({
     "kind", "result", "source_checkout_sha", "github_run_id",
     "source_database_class", "restored_database_class", "archive_sha256",
+    "post_restore_archive_sha256", "archive_unchanged_during_restore",
     "synthetic_fixture_sha256", "restored_fixture_sha256",
     "synthetic_records", "tenant_record_counts",
     "tenant_status_minor_unit_totals", "restored_counts_match",
@@ -37,6 +38,7 @@ FIXED = {
         "tenant-beta/failed": 98555,
         "tenant-beta/reversed": 100,
     },
+    "archive_unchanged_during_restore": True,
     "restored_counts_match": True,
     "restored_totals_match": True,
     "duplicate_provider_reference_rejected": True,
@@ -73,10 +75,12 @@ def validate(report: object, *, commit: str, run_id: str) -> list[str]:
         errors.append("source commit mismatch")
     if report.get("github_run_id") != run_id:
         errors.append("workflow run ID mismatch")
-    for key in ("archive_sha256", "synthetic_fixture_sha256", "restored_fixture_sha256"):
+    for key in ("archive_sha256", "post_restore_archive_sha256", "synthetic_fixture_sha256", "restored_fixture_sha256"):
         value = report.get(key)
         if not isinstance(value, str) or not SHA256.fullmatch(value):
             errors.append(f"restore evidence {key} format invalid")
+    if report.get("archive_sha256") != report.get("post_restore_archive_sha256"):
+        errors.append("inspected and restored archive fingerprints differ")
     if report.get("synthetic_fixture_sha256") != report.get("restored_fixture_sha256"):
         errors.append("source and restored synthetic fingerprints differ")
     return errors
