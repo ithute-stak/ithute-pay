@@ -4,6 +4,7 @@ WORKDIR /src
 RUN flutter config --enable-web && flutter create --platforms=web --project-name ithutepay_mobile .
 COPY pubspec.yaml ./pubspec.yaml
 COPY lib/ ./lib/
+RUN rm -rf test
 COPY test/ ./test/
 RUN flutter pub get && flutter test && flutter build web --release
 
