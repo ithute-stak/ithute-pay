@@ -98,11 +98,50 @@ jobs:
             python scripts/smoke_migrations_postgres.py
       - name: Verify PostgreSQL backup and restore on disposable databases
         working-directory: apps/backend
+        env:
+          CI_RESTORE_EVIDENCE_PATH: disposable-restore-evidence.json
         run: |
           pg_dump --version
           pg_restore --version
           DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \
             python scripts/smoke_backup_restore_postgres.py
+      - name: Validate non-secret disposable restore evidence
+        working-directory: apps/backend
+        env:
+          EVIDENCE_SHA: ${{ github.sha }}
+          EVIDENCE_RUN: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import json, os, re
+          from pathlib import Path
+          report = json.loads(Path("disposable-restore-evidence.json").read_text())
+          assert report["kind"] == "ithutepay_disposable_postgres_restore"
+          assert report["result"] == "passed"
+          assert report["source_checkout_sha"] == os.environ["EVIDENCE_SHA"]
+          assert report["github_run_id"] == os.environ["EVIDENCE_RUN"]
+          for key in ("archive_sha256", "synthetic_fixture_sha256", "restored_fixture_sha256"):
+              assert re.fullmatch(r"[0-9a-f]{64}", report[key]), key
+          assert report["synthetic_fixture_sha256"] == report["restored_fixture_sha256"]
+          assert report["synthetic_records"] == 4
+          assert report["tenant_record_counts"] == {"tenant-alpha": 2, "tenant-beta": 2}
+          for key in (
+              "restored_counts_match", "restored_totals_match",
+              "duplicate_provider_reference_rejected",
+              "duplicate_tenant_idempotency_key_rejected", "negative_amount_rejected",
+              "schema_constraints_verified",
+          ):
+              assert report[key] is True, key
+          for key in ("production_data_used", "historical_data_recovery_certified", "deployment_performed"):
+              assert report[key] is False, key
+          print("Disposable CI restore evidence validated: no production recovery asserted")
+          PY
+      - name: Upload verified disposable restore evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: ithutepay-disposable-restore-evidence
+          path: apps/backend/disposable-restore-evidence.json
+          if-no-files-found: error
+          retention-days: 30
       - name: Execute financial concurrency tests
         working-directory: apps/backend
         run: |
