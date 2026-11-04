@@ -29,7 +29,7 @@ new = os.environ["MOCK_NEW"]
 log("docker " + " ".join(args))
 if args[:2] == ["compose", "version"]:
     print("Docker Compose mock")
-elif args[:2] == ["ps", "-aq"]:
+elif args and args[0] == "ps" and "-aq" in args:
     print("mock-container")
 elif args and args[0] == "inspect" and "mock-container" in args:
     fmt = " ".join(args)
