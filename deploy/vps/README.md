@@ -38,7 +38,7 @@ Create an operator-owned configuration file. **Replace the sample paths and publ
 sudo tee /etc/ithutepay-deploy.conf >/dev/null <<'CONFIG'
 PAY_DEPLOY_DIR=/home/administrator/ithute-pay
 PAY_ENV_FILE=/home/administrator/ithute-pay/.env
-PAY_COMPOSE_FILES='/home/administrator/ithute-pay/compose.yaml /home/administrator/ithute-pay/compose.production-networks.yml'
+PAY_COMPOSE_FILES='/home/administrator/ithute-pay/compose.yaml /home/administrator/ithute-pay/compose.vps.yaml /home/administrator/ithute-pay/compose.production-networks.yml /home/administrator/ithute-pay/compose.release-networks.yml /home/administrator/ithute-pay/compose.release-image.yml'
 PAY_HEALTH_URL=https://api.pay.ithute.co.ls/health
 PAY_API_URL=https://api.pay.ithute.co.ls/health
 PAY_PORTAL_URL=https://portal.pay.ithute.co.ls/
@@ -47,7 +47,7 @@ CONFIG
 sudo chmod 0600 /etc/ithutepay-deploy.conf
 ```
 
-**Important:** The paths above are examples; the real VPS might use `.env.production` and/or other Compose files. Preserve the exact production Compose project name and all overlays. Verify `docker compose --env-file ... -f ... config` resolves the existing data volumes and networks before installing this command. `PAY_ENV_FILE` must contain the `DB_PASSWORD` and other values already used by the running stack. The script intentionally refuses initial installation; a currently healthy running app is required.
+**Observed on VPS November 4, 2026:** The running ithute-pay project reports the five Compose files above, in that order; keep all five until an operator verifies the complete effective config. Verify that the release-image overlay accepts the IPB_IMAGE override and that the active project and volume names stay unchanged. **Important:** The paths above are examples; the real VPS might use `.env.production` and/or other Compose files. Preserve the exact production Compose project name and all overlays. Verify `docker compose --env-file ... -f ... config` resolves the existing data volumes and networks before installing this command. `PAY_ENV_FILE` must contain the `DB_PASSWORD` and other values already used by the running stack. The script intentionally refuses initial installation; a currently healthy running app is required.
 
 For a release **with no pending Alembic migrations**, deploy with:
 
