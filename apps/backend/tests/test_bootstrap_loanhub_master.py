@@ -5,6 +5,7 @@ import pytest
 from scripts.bootstrap_loanhub_master import (
     EXPECTED_COMPANY_ID,
     plan_bootstrap,
+    verify_existing_mpesa_gateway,
 )
 
 
@@ -51,3 +52,36 @@ def test_rerun_is_idempotent():
 def test_ambiguous_or_unsafe_state_fails_closed(merchants, masters):
     with pytest.raises(ValueError):
         plan_bootstrap(merchants, masters)
+
+
+def gateway(code="38542", *, environment="production", active=True, enabled=True, mode="live"):
+    return SimpleNamespace(
+        id="gateway-1",
+        service_provider_code=code,
+        environment=environment,
+        active=active,
+        enabled=enabled,
+        mode=mode,
+    )
+
+
+def test_existing_38542_production_provider_is_reused():
+    result = verify_existing_mpesa_gateway([gateway(), gateway(environment="sandbox", active=False)])
+    assert result == {
+        "provider_configuration_id": "gateway-1",
+        "mpesa_service_provider_code": "38542",
+    }
+
+
+@pytest.mark.parametrize("rows", [
+    [],
+    [gateway(code="99999")],
+    [gateway(active=False)],
+    [gateway(enabled=False)],
+    [gateway(mode="simulator")],
+    [gateway(environment="sandbox")],
+    [gateway(), gateway()],
+])
+def test_missing_or_conflicting_production_gateway_blocks_master_registration(rows):
+    with pytest.raises(ValueError):
+        verify_existing_mpesa_gateway(rows)
