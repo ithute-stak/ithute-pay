@@ -233,7 +233,7 @@ if evidence_path:
         "synthetic_records": source_counts["ci_financial_restore_fixtures"],
         "tenant_record_counts": source_tenants,
         "tenant_status_minor_unit_totals": {
-            f"{tenant}/{status}": amount
+            f"{tenant}/{status}": int(amount)
             for (tenant, status), (_, amount) in sorted(source_totals.items())
         },
         "restored_counts_match": True,
