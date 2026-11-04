@@ -193,3 +193,14 @@ traceability, not misrepresented as the tested image's source revision.
 This is only local tag-to-checkout consistency. Tags and OCI labels are not
 cryptographic attestations; a GHCR digest, provenance review and authorised
 release remain independent requirements.
+
+
+### Running-container image identity
+
+The CI rehearsal now inspects the actual Docker container created for the
+staging application and compares its immutable local image ID with the
+candidate image built by the workflow. A mismatch is **NO-GO** before the
+API/database/frontend smoke checks can be certified. This ensures the
+health results come from the tested image rather than another locally
+available image. The ID remains a **local image ID**, not a published
+registry digest or independently verified provenance statement.
