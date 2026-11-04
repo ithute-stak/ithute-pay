@@ -35,3 +35,16 @@ def test_image_tag_must_match_exact_checkout_not_only_pr_head():
     assert '"external_sandbox_certified": False' in script
     assert '"operator_staging_deployment": False' in script
     assert '"local_image_id": image_id' in script
+
+
+def test_running_container_image_id_matches_built_candidate_before_smoke():
+    steps = _steps()
+    rehearsal = next(step for step in steps if step.get("name", "").startswith("Boot PR image"))
+    script = rehearsal["run"]
+    assert 'docker compose -f deploy/staging/compose.yaml ps -q app' in script
+    assert 'docker image inspect "$STAGING_IMAGE"' in script
+    assert 'docker container inspect "$APP_CONTAINER"' in script
+    assert 'test "$RUNNING_IMAGE_ID" = "$EXPECTED_IMAGE_ID"' in script
+    assert script.index('test "$RUNNING_IMAGE_ID" = "$EXPECTED_IMAGE_ID"') < script.index(
+        "staging_postdeploy_smoke.py"
+    )
