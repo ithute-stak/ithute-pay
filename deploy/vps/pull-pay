@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# IthutePay image-only deployment. No git, build, pip, npm, or Flutter builds on VPS.
+set -Eeuo pipefail
+umask 077
+
+CONFIG="${PAY_DEPLOY_CONFIG:-/etc/ithutepay-deploy.conf}"
+[[ -r "$CONFIG" ]] || { echo "Missing $CONFIG; installation required" >&2; exit 2; }
+# Trusted root/operator-controlled configuration; never source remote input.
+source "$CONFIG"
+: "${PAY_DEPLOY_DIR:?PAY_DEPLOY_DIR is required}"
+: "${PAY_COMPOSE_FILES:?PAY_COMPOSE_FILES is required}"
+: "${PAY_ENV_FILE:?PAY_ENV_FILE is required}"
+: "${PAY_HEALTH_URL:?PAY_HEALTH_URL is required}"
+: "${PAY_PORTAL_URL:?PAY_PORTAL_URL is required}"
+: "${PAY_API_URL:?PAY_API_URL is required}"
+[[ "$PAY_DEPLOY_DIR" = /* && "$PAY_ENV_FILE" = /* ]] || { echo "Use absolute paths" >&2; exit 2; }
+[[ "$PAY_HEALTH_URL" == https://* && "$PAY_API_URL" == https://* && "$PAY_PORTAL_URL" == https://* ]] || { echo "HTTPS endpoints required" >&2; exit 2; }
+[[ "$PAY_HEALTH_URL" != *"*"* ]] || exit 2
+[[ "${1:-}" = latest && "${2:-}" = "" ]] || { echo "Usage: pull pay latest" >&2; exit 2; }
+
+# Compose files are whitespace-separated absolute paths controlled by the local operator.
+read -r -a FILES <<< "$PAY_COMPOSE_FILES"
+ARGS=()
+for file in "${FILES[@]}"; do
+  [[ "$file" = /* && -r "$file" ]] || { echo "Missing compose file: $file" >&2; exit 2; }
+  ARGS+=(-f "$file")
+done
+[[ ${#ARGS[@]} -gt 0 ]] || exit 2
+
+for cmd in docker curl flock timeout; do command -v "$cmd" >/dev/null || { echo "Missing $cmd" >&2; exit 2; }; done
+docker compose version >/dev/null
+cd "$PAY_DEPLOY_DIR"
+[[ -r "$PAY_ENV_FILE" ]] || { echo "Missing env file" >&2; exit 2; }
+
+LOCK="${PAY_DEPLOY_LOCK:-/var/lock/ithutepay-deploy.lock}"
+exec 9>"$LOCK"
+flock -n 9 || { echo "Another deployment is in progress" >&2; exit 1; }
+
+compose() { docker compose --env-file "$PAY_ENV_FILE" "${ARGS[@]}" "$@"; }
+IMAGE="ghcr.io/ithute-stak/ithute-pay:latest"
+SERVICE="ithute-pay-bridge"
+# Never allow auto-migrations during app startup; deployer runs them explicitly.
+OVERRIDE="$(mktemp --suffix=.yaml)"
+trap 'rm -f "$OVERRIDE"' EXIT
+cat >"$OVERRIDE" <<'YAML'
+services:
+  ithute-pay-bridge:
+    environment:
+      RUN_MIGRATIONS_ON_START: "false"
+YAML
+ARGS+=(-f "$OVERRIDE")
+
+# Save previous immutable image reference before pulling or changing the container.
+OLD_CONTAINER="$(compose ps -q "$SERVICE")"
+[[ -n "$OLD_CONTAINER" ]] || { echo "App container not found; refusing first-time install" >&2; exit 1; }
+OLD_IMAGE_ID="$(docker inspect "$OLD_CONTAINER" --format '{{.Image}}')"
+[[ "$OLD_IMAGE_ID" == sha256:* ]] || exit 1
+OLD_STATE="$(docker inspect "$OLD_CONTAINER" --format '{{.State.Running}}')"
+[[ "$OLD_STATE" == true ]] || { echo "Old app is not running; refusing update" >&2; exit 1; }
+# Image IDs are valid Docker image references locally and survive tag movements.
+echo "Previous app image: $OLD_IMAGE_ID"
+DEPLOYED=false
+rollback() {
+  local code="$?"
+  trap - ERR
+  if [[ "$DEPLOYED" == true ]]; then
+    echo "New release failed. Restoring previous application image..." >&2
+    export IPB_IMAGE="$OLD_IMAGE_ID"
+    compose up -d --no-deps --no-build --pull never --force-recreate "$SERVICE" || true
+    if ! check_health; then
+      echo "CRITICAL: old image restore health failed; immediate operator intervention needed" >&2
+    fi
+  fi
+  exit "$code"
+}
+check_health() {
+  local i status
+  for i in $(seq 1 "${PAY_HEALTH_ATTEMPTS:-24}"); do
+    status="$(compose ps -q "$SERVICE" | xargs -r docker inspect --format '{{if .State.Health}}{{.State.Health.Status}}{{else}}missing{{end}}' 2>/dev/null || true)"
+    if [[ "$status" == healthy ]] &&
+      curl -fsS --max-time 8 "$PAY_HEALTH_URL" >/dev/null &&
+      curl -fsS --max-time 8 "$PAY_API_URL" >/dev/null &&
+      curl -fsS --max-time 8 "$PAY_PORTAL_URL" >/dev/null; then return 0; fi
+    sleep 5
+  done
+  return 1
+}
+trap rollback ERR
+
+# A preexisting broken endpoint must not be mistaken for a deployment regression.
+check_health || { echo "Pre-deployment health failed; refusing update" >&2; exit 1; }
+
+echo "Pulling published CI image only: $IMAGE"
+docker pull "$IMAGE"
+NEW_ID="$(docker image inspect "$IMAGE" --format '{{.Id}}')"
+[[ "$NEW_ID" == sha256:* ]] || exit 1
+if [[ "$NEW_ID" == "$OLD_IMAGE_ID" ]]; then echo "Already running latest image; no changes."; exit 0; fi
+export IPB_IMAGE="$NEW_ID"
+compose config --quiet
+
+# Alembic version check on the candidate image; no application process is started.
+if ! compose run --rm --no-deps --no-build --pull never \
+  --workdir /app/backend --entrypoint python "$SERVICE" -m alembic current --check; then
+  if [[ "${PAY_APPROVE_MIGRATIONS:-no}" != yes ]]; then
+    echo "Schema differs from candidate Alembic head. STOP: review expand-only migrations," >&2
+    echo "then explicitly approve with PAY_APPROVE_MIGRATIONS=yes pull pay latest." >&2
+    exit 1
+  fi
+  BACKUP_DIR="${PAY_BACKUP_DIR:-/var/backups/ithutepay}"
+  mkdir -p "$BACKUP_DIR"
+  BACKUP="$BACKUP_DIR/ithutepay-$(date -u +%Y%m%dT%H%M%SZ).dump"
+  echo "Backing up PostgreSQL to $BACKUP"
+  compose exec -T postgres sh -ec 'export PGPASSWORD="$POSTGRES_PASSWORD"; exec pg_dump -U "$POSTGRES_USER" -d "$POSTGRES_DB" -Fc' > "$BACKUP"
+  [[ -s "$BACKUP" ]] || { echo "Empty backup; stopping" >&2; exit 1; }
+  # No automatic downgrade: migrations must be backward compatible with old image.
+  compose run --rm --no-deps --no-build --pull never \
+    --workdir /app/backend --entrypoint python "$SERVICE" -m alembic upgrade head
+  compose run --rm --no-deps --no-build --pull never \
+    --workdir /app/backend --entrypoint python "$SERVICE" -m alembic current --check
+fi
+
+echo "Switching application only; DB/Redis volumes and other services remain untouched"
+DEPLOYED=true
+compose up -d --no-deps --no-build --pull never --force-recreate "$SERVICE"
+check_health
+echo "SUCCESS: IthutePay running image $NEW_ID"
+echo "Previous image retained locally: $OLD_IMAGE_ID"
