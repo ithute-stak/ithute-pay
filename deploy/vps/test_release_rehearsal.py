@@ -134,6 +134,7 @@ class ReleaseRehearsal(unittest.TestCase):
                 "MOCK_LOG": str(log),
                 "MOCK_OLD": OLD,
                 "MOCK_NEW": OLD if same else NEW,
+                "PAY_RELEASE_OVERRIDE": str(root / "persistent-release-override.yml"),
             })
             if approve:
                 env["PAY_APPROVE_MIGRATIONS"] = "yes"
