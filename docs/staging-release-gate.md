@@ -60,6 +60,15 @@ regressions are reviewed.
   against the source, and checks the canary, Alembic revision and constraints.
   This test may contain empty application tables and **does not establish**
   recovery of real historical financial records.
+
+  The disposable restore now also inserts four **synthetic** payment-like
+  records across two test tenants, with provider references, idempotency keys,
+  amounts in minor units, and distinct terminal/pending statuses. After
+  `pg_restore`, CI compares a deterministic SHA-256 of every synthetic field
+  and the per-tenant row distribution against the source. This detects value
+  corruption even when row counts still match. These records are deliberately
+  not inserted into live application payment tables and do **not** exercise
+  real historical financial-data recovery.
 - PostgreSQL financial-integrity tests exercise transaction concurrency,
   tenant API isolation, reconciliation casework and guarded notification
   delivery.
