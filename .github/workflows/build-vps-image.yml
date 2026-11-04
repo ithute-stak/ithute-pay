@@ -256,7 +256,7 @@ jobs:
               "github_run_id": os.environ["GITHUB_RUN_ID"],
               "tested_checkout_sha": checkout,
               "pr_head_sha": os.environ["PR_HEAD_SHA"],
-              "checkout_kind": "pull_request_merge_ref",
+              "checkout_kind": "github_actions_pull_request_checkout",
               "image_tag_matches_tested_checkout": True,
               "local_image_reference": image_ref,
               "local_image_id": image_id,
