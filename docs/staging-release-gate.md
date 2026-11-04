@@ -109,3 +109,19 @@ not in the release manifest or GitHub PR.
 
 Even after staging preflight passes, external sandbox certification and
 production change approval remain separate gates.
+
+
+### Closed-schema release manifest
+
+The offline preflight now **rejects every unrecognised field** at the top
+level and inside `gates` or `switches`. Values and unknown field names
+are never echoed to logs. Only the explicitly documented attestations and
+switches are accepted; nested attachments, secret objects or arbitrary
+release notes must be kept outside the manifest.
+
+The required disabled switches include `RUN_BACKGROUND_JOBS`,
+`GOLINK_COLLECTIONS_ENABLED` and `SANDBOX_TEST_LAB_ENABLED` alongside
+the original M-PESA, push, reconciliation and auto-migration controls. These
+attestations must match the actual staging Compose/runtime settings. The
+validator cannot itself prove those settings were applied in a running
+environment. Existing production settings remain unchanged.
