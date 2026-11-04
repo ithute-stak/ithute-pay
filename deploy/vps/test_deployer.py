@@ -17,6 +17,12 @@ class DeployGuardTests(unittest.TestCase):
         self.assertNotRegex(source, r"(?m)^\s*(docker\s+compose\s+down|docker\s+volume\s+rm|docker\s+system\s+prune)")
         self.assertIn('SERVICE="ithute-pay-bridge"', source)
 
+    def test_pinned_release_image_is_overridden_last(self):
+        self.assertIn('ARGS+=(-f "$OVERRIDE")', source)
+        self.assertIn('image: ${IPB_IMAGE:?IPB_IMAGE must be set by the release launcher}', source)
+        self.assertIn('export IPB_IMAGE="$OLD_IMAGE_ID"', source)
+        self.assertIn('export IPB_IMAGE="$NEW_ID"', source)
+
     def test_previous_image_retained_for_rollback(self):
         self.assertIn('OLD_IMAGE_ID="$(docker inspect', source)
         self.assertIn('export IPB_IMAGE="$OLD_IMAGE_ID"', source)
