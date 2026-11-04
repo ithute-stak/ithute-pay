@@ -14,9 +14,10 @@ def test_evidence_is_written_only_after_successful_real_container_rehearsal():
     steps = _steps()
     smoke = next(i for i, step in enumerate(steps) if step.get("name", "").startswith("Boot PR image"))
     evidence = next(i for i, step in enumerate(steps) if step.get("name") == "Record offline PR rehearsal evidence")
+    validate = next(i for i, step in enumerate(steps) if step.get("name") == "Independently validate saved PR rehearsal evidence")
     upload = next(i for i, step in enumerate(steps) if step.get("name") == "Upload offline staging rehearsal evidence")
-    assert smoke < evidence < upload
-    for i in (smoke, evidence, upload):
+    assert smoke < evidence < validate < upload
+    for i in (smoke, evidence, validate, upload):
         assert steps[i]["if"] == "github.event_name == 'pull_request'"
     assert "continue-on-error" not in steps[evidence]
     assert steps[upload]["with"]["if-no-files-found"] == "error"
@@ -48,3 +49,14 @@ def test_running_container_image_id_matches_built_candidate_before_smoke():
     assert script.index('test "$RUNNING_IMAGE_ID" = "$EXPECTED_IMAGE_ID"') < script.index(
         "staging_postdeploy_smoke.py"
     )
+
+
+def test_independent_validation_cannot_be_skipped_before_artifact_upload():
+    steps = _steps()
+    validation = next(s for s in steps if s.get("name") == "Independently validate saved PR rehearsal evidence")
+    assert "validate_staging_rehearsal_evidence.py" in validation["run"]
+    assert "--tested-checkout-sha" in validation["run"]
+    assert "--pr-head-sha" in validation["run"]
+    assert "--run-id" in validation["run"]
+    assert validation["if"] == "github.event_name == 'pull_request'"
+    assert "continue-on-error" not in validation
