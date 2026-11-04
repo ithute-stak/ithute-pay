@@ -31,8 +31,8 @@ if args[:2] == ["compose", "version"]:
     print("Docker Compose mock")
 elif args[:2] == ["ps", "-aq"]:
     print("mock-container")
-elif args[:2] == ["inspect", "mock-container"]:
-    fmt = args[-1]
+elif args and args[0] == "inspect" and "mock-container" in args:
+    fmt = " ".join(args)
     if ".Image" in fmt:
         print(s["running_image"])
     elif ".State.Running" in fmt:
