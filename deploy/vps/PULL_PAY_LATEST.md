@@ -3,10 +3,7 @@
 This command is installed once as `/usr/local/bin/pull` on the existing
 IthutePay VPS. It **never runs git pull, host Python, or host pytest**.
 
-The command updates the **combined FastAPI backend + Next.js merchant portal**
-from GHCR. Flutter remains on its existing, separate container until an
-independent, audited Flutter image release channel is built. No migration
-runs in the Flutter service.
+The command pulls two separately published GHCR images: **combined FastAPI backend + Next.js merchant portal**, and **Flutter web**. Flutter is deployed independently after the combined service is healthy. No database migrations run in the Flutter service. Flutter feature development remains deferred.
 
 ## Preflight
 - Must run on the approved VPS with the existing Compose overlay files.
@@ -15,9 +12,10 @@ runs in the Flutter service.
 - Requires registry authorization to pull private GHCR images (if applicable).
 - Requires healthy existing PostgreSQL and the existing payment app.
 - Existing production Caddy and `public-edge` network must be intact.
-- Deploys the **GHCR latest** tag only. It is published by
-  `.github/workflows/build-vps-image.yml` from `main` after required
-  financial-integrity checks.
+- Deploys the **GHCR latest** tags only. The combined release comes from
+  `.github/workflows/build-vps-image.yml` and the Flutter image from
+  `.github/workflows/publish-flutter-image.yml`. Both images must already
+  be published, accessible and validated before the first production use.
 - Requires production Alembic migration compatibility. Additive migrations
   should use expand/contract releases; irreversible migrations require
   operator-controlled maintenance.
@@ -46,14 +44,20 @@ reinstallation should use an audited immutable commit URL.
 
 1. Exclusive `flock` guard and existing service inspection
 2. Pull combined GHCR latest image and pin by registry digest
-3. Validate **the existing production Compose stack**, adding one temporary
+3. Pull the separate Flutter GHCR image and preserve its old running image
+4. Validate **the existing production Compose stack**, adding one temporary
    image override. Prevent accidental migration/worker/provider activation
-4. Produce root-only PostgreSQL custom-format dump before database changes
-5. Inspect old schema revision and run new image's Alembic migration one-shot
-6. Recreate **only** `ithute-pay-bridge` (not PostgreSQL, Redis, Flutter or Caddy)
-7. Verify running exact Docker image ID, container health, public API health,
+5. Produce root-only PostgreSQL custom-format dump before database changes
+6. Inspect old schema revision and run new image's Alembic migration one-shot
+7. Recreate **only** `ithute-pay-bridge` (not PostgreSQL, Redis, Flutter or Caddy)
+8. Verify running exact Docker image ID, container health, public API health,
    and merchant portal HTTPS
-8. Roll back old image if health fails **and database revision has not changed**
+9. Roll back old image if health fails **and database revision has not changed**
+
+10. Recreate the separate Flutter web service from its pinned GHCR image;
+    verify container health and public HTTPS, or restore its previous image
+    if that deployment fails. Flutter rollback does not reverse a healthy
+    backend/portal release.
 
 If migrations change the schema and the new image fails, automatic rollback
 to old application code may break financial transactions. The helper refuses
