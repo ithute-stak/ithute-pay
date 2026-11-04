@@ -33,6 +33,7 @@ class DeployGuardTests(unittest.TestCase):
 
     def test_production_health_required(self):
         self.assertIn('check_health ||', source)
+        self.assertIn('--max-redirs 5 --proto-redir =https', source)
         for indicator in ("PAY_HEALTH_URL", "PAY_API_URL", "PAY_PORTAL_URL", "healthy"):
             self.assertIn(indicator, source)
 
