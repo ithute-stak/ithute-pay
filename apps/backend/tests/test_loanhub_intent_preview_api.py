@@ -6,6 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
+from database.models import Application, ApiKey
 from database.session import get_db
 from routers.loanhub_intent_preview import (
     CollectionIntentPreviewInput, build_collection_intent_preview, router,
@@ -126,7 +127,12 @@ def test_admin_http_preview_has_no_mutation_or_financial_side_effects():
             return merchant if identifier == MASTER_MERCHANT_ID else gateway
 
         def scalars(self, query):
-            return SimpleNamespace(all=lambda: apps)
+            entity = query.column_descriptions[0].get('entity')
+            if entity is Application:
+                return SimpleNamespace(all=lambda: apps)
+            if entity is ApiKey:
+                return SimpleNamespace(all=lambda: [])
+            raise AssertionError('Unexpected database query')
 
         def add(self, *args, **kwargs):
             raise AssertionError("No database writes allowed")
@@ -142,8 +148,6 @@ def test_admin_http_preview_has_no_mutation_or_financial_side_effects():
         role="platform_admin",
     )
     app.dependency_overrides[get_db] = lambda: ReadOnlyDB()
-    # Application and API key queries require model-aware result resolution;
-    # this minimal DB intentionally fails closed rather than fabricating keys.
     response = TestClient(app).post(
         "/api/v1/admin/merchant-network/loanhub-batlokoa/collection-intent-preview",
         json={
@@ -152,4 +156,8 @@ def test_admin_http_preview_has_no_mutation_or_financial_side_effects():
             "idempotency_key": "collect_req_A123456789",
         },
     )
-    assert response.status_code in (200, 409)
+    assert response.status_code == 200
+    data = response.json()
+    assert data['financial_posting_enabled'] is False
+    assert data['provider_execution_enabled'] is False
+    assert data['idempotency_reserved'] is False
