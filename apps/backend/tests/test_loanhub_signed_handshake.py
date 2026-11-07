@@ -21,9 +21,11 @@ def signed(**overrides):
     company_id = overrides.pop("company_id", LOANHUB_COMPANY_ID)
     msg = f"{timestamp}\n{nonce}\nGET\n{SIGNATURE_PATH}\n{company_id}".encode()
     signature = hmac.new(SECRET.encode(), msg, hashlib.sha256).hexdigest()
-    return dict(secret=SECRET, timestamp=timestamp, nonce=nonce,
+    args = dict(secret=SECRET, timestamp=timestamp, nonce=nonce,
                 company_id=company_id, signature=signature,
-                now=NOW, claim_nonce=lambda _: True, **overrides)
+                now=NOW, claim_nonce=lambda _: True)
+    args.update(overrides)
+    return args
 
 
 def test_valid_signature_is_bound_to_company_and_single_use():
