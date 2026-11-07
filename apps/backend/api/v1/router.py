@@ -5,7 +5,7 @@ from providers.mpesa.routes import ROUTERS as MPESA_ROUTERS
 from providers.paypal.routes import ROUTERS as PAYPAL_ROUTERS
 from routers import (
     admin, auth, authorizations, checkout, developer, finance, gateway_admin, golink_callbacks, health,
-    loanhub_fee_preview, loanhub_funding_accounts, loanhub_funding_status, loanhub_master_binding, mandates, merchant_network_admin, notifications, operations,
+    loanhub_fee_preview, loanhub_signed_handshake, loanhub_funding_accounts, loanhub_funding_status, loanhub_master_binding, mandates, merchant_network_admin, notifications, operations,
     payments, platform, portal, provider_catalog, providers, public, tenant_credentials, tenant_management, tenant_portal, tenant_reconciliation, tenant_reconciliation_cases, tenant_reconciliation_operations, tenant_reconciliation_alerts, tenant_push_operations, tenant_reporting, ws,
 )
 
@@ -40,6 +40,7 @@ api_router.include_router(tenant_push_operations.router)
 api_router.include_router(merchant_network_admin.router)
 api_router.include_router(loanhub_master_binding.router)
 api_router.include_router(loanhub_fee_preview.router)
+api_router.include_router(loanhub_signed_handshake.router)
 api_router.include_router(providers.router)
 api_router.include_router(public.router)
 api_router.include_router(portal.router)
