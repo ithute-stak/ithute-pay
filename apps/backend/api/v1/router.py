@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from routers.mpesa_pass_through_preview import router as mpesa_pass_through_preview_router
 
 from providers.ecocash.routes import ROUTERS as ECOCASH_ROUTERS
 from providers.mpesa.routes import ROUTERS as MPESA_ROUTERS
@@ -38,6 +39,7 @@ api_router.include_router(tenant_reconciliation_operations.router)
 api_router.include_router(tenant_reconciliation_alerts.router)
 api_router.include_router(tenant_push_operations.router)
 api_router.include_router(merchant_network_admin.router)
+api_router.include_router(mpesa_pass_through_preview_router)
 api_router.include_router(loanhub_master_binding.router)
 api_router.include_router(loanhub_fee_preview.router)
 api_router.include_router(loanhub_intent_preview.router)
