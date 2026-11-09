@@ -14,6 +14,7 @@ from database.models.gateway import (
 )
 from database.models.loanhub_funding import LoanHubFundingProviderConfiguration
 from database.models.mandate import Mandate, MandateCharge
+from database.models.mpesa_pass_through import MpesaPassThroughTransaction
 from database.models.operations import (
     ConnectorConfiguration, MerchantComplianceProfile, ReconciliationRun,
     RiskDecision, RiskRule, SettlementBatch,
@@ -40,7 +41,7 @@ __all__ = [
     'ApiKey', 'Application', 'AuditLog', 'AuthSession', 'CheckoutSession', 'Event',
     'FeeRule', 'FundingLedgerEntry', 'IdempotencyRecord', 'JournalEntry', 'JournalLine', 'LedgerAccount',
     'LedgerEntry', 'Mandate', 'MandateCharge', 'Merchant', 'MerchantFundingAccount', 'PaymentAuthorization',
-    'PaymentIntent', 'PaymentLink', 'Payout', 'ProviderConfiguration', 'ProviderOperation',
+    'PaymentIntent', 'PaymentLink', 'Payout', 'MpesaPassThroughTransaction', 'ProviderConfiguration', 'ProviderOperation',
     'ProviderTransaction', 'ReconciliationItem', 'Reversal', 'Settlement', 'Transfer',
     'User', 'WebhookDelivery', 'WebhookEndpoint',
     'GatewayProviderConfiguration', 'MerchantGatewayProfile', 'MerchantRoutingKey',
