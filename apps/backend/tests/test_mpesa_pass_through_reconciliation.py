@@ -7,6 +7,7 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from database.models import Application, JournalEntry, Merchant
 from database.session import SessionLocal
 from services.mpesa_pass_through_evidence import (
@@ -119,7 +120,7 @@ def test_duplicate_provider_id_across_legs_is_rejected():
         funding(db, ids)
         reserve_operation(db, **ids, leg="onward", reference="payout-other")
         bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="26659000000")
-        with pytest.raises(TransactionError, match="already used"):
+        with pytest.raises(IntegrityError):
             reconcile_authenticated_query(
                 db, **ids, leg="onward", source_shortcode="XXXX",
                 destination="26659000000",
