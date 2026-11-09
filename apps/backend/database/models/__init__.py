@@ -16,6 +16,7 @@ from database.models.loanhub_funding import LoanHubFundingProviderConfiguration
 from database.models.mandate import Mandate, MandateCharge
 from database.models.mpesa_pass_through import MpesaPassThroughTransaction
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
+from database.models.mpesa_pass_through_notification import MpesaPassThroughNotificationDraft
 from database.models.mpesa_pass_through_exception import (
     MpesaPassThroughExceptionCase, MpesaPassThroughExceptionEvent,
 )
@@ -48,7 +49,7 @@ __all__ = [
     'ApiKey', 'Application', 'AuditLog', 'AuthSession', 'CheckoutSession', 'Event',
     'FeeRule', 'FundingLedgerEntry', 'IdempotencyRecord', 'JournalEntry', 'JournalLine', 'LedgerAccount',
     'LedgerEntry', 'Mandate', 'MandateCharge', 'Merchant', 'MerchantFundingAccount', 'PaymentAuthorization',
-    'PaymentIntent', 'PaymentLink', 'Payout', 'MpesaPassThroughTransaction', 'MpesaPassThroughExceptionCase', 'MpesaPassThroughExceptionEvent', 'MpesaPassThroughOperationIntent', 'MpesaPassThroughLegIdentity', 'MpesaPassThroughProviderReceipt', 'ProviderConfiguration', 'ProviderOperation',
+    'PaymentIntent', 'PaymentLink', 'Payout', 'MpesaPassThroughTransaction', 'MpesaPassThroughExceptionCase', 'MpesaPassThroughExceptionEvent', 'MpesaPassThroughNotificationDraft', 'MpesaPassThroughOperationIntent', 'MpesaPassThroughLegIdentity', 'MpesaPassThroughProviderReceipt', 'ProviderConfiguration', 'ProviderOperation',
     'ProviderTransaction', 'ReconciliationItem', 'Reversal', 'Settlement', 'Transfer',
     'User', 'WebhookDelivery', 'WebhookEndpoint',
     'GatewayProviderConfiguration', 'MerchantGatewayProfile', 'MerchantRoutingKey',
