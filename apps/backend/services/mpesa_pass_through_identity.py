@@ -43,8 +43,6 @@ def bind_leg_identity(
     ).with_for_update())
     if intent is None or intent.provider != "mpesa":
         raise TransactionError("Reserved M-Pesa intent not found")
-    if intent.state != "reserved":
-        raise TransactionError("Cannot bind an operation after reconciliation")
     previous = db.scalar(select(MpesaPassThroughLegIdentity).where(
         MpesaPassThroughLegIdentity.intent_id == intent.id,
     ))
@@ -52,6 +50,8 @@ def bind_leg_identity(
         if previous.source_party != source_party or previous.destination_party != destination_party:
             raise TransactionError("Attempt to change immutable operation beneficiary or sender")
         return previous
+    if intent.state != "reserved":
+        raise TransactionError("Cannot bind a new identity after reconciliation")
     binding = MpesaPassThroughLegIdentity(
         intent_id=intent.id, source_party=source_party,
         destination_party=destination_party,
