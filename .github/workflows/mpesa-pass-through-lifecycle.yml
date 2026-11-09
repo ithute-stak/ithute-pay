@@ -1,0 +1,36 @@
+name: M-Pesa pass-through lifecycle tests
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/services/mpesa_pass_through_lifecycle.py'
+      - 'apps/backend/services/mpesa_pass_through_quotes.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_lifecycle.py'
+      - '.github/workflows/mpesa-pass-through-lifecycle.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/services/mpesa_pass_through_lifecycle.py'
+      - 'apps/backend/services/mpesa_pass_through_quotes.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_lifecycle.py'
+      - '.github/workflows/mpesa-pass-through-lifecycle.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  lifecycle:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install standalone test dependency
+        run: python -m pip install 'pytest>=8,<10'
+      - name: Run non-posting pass-through tests
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_mpesa_pass_through_lifecycle.py
