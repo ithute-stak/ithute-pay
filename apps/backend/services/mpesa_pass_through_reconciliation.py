@@ -11,10 +11,13 @@ fail closed; no journal or fee may be recognized from an unverified response.
 """
 from __future__ import annotations
 
-from sqlalchemy import or_, select
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+from database.models.mpesa_pass_through_identity import (
+    MpesaPassThroughLegIdentity, MpesaPassThroughProviderReceipt,
+)
+from services.mpesa_pass_through_evidence import evidence_digest
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
 from services.mpesa_pass_through_accounting import post_verified_outgoing
 from services.mpesa_pass_through_evidence import (
@@ -54,24 +57,42 @@ def reconcile_authenticated_query(
     if (intent.currency != row.currency or
             intent.amount != (row.onward_amount if leg == "onward" else row.funding_amount)):
         raise TransactionError("Reserved operation differs from immutable quote")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id,
+    ))
+    if binding is None:
+        raise TransactionError("Missing immutable provider party binding")
+    if (source_shortcode != binding.source_party or
+            destination != binding.destination_party):
+        raise TransactionError("Reconciliation parties differ from committed binding")
     expected = ExpectedMovement(
         reference=intent.reference, amount=intent.amount, currency=intent.currency,
-        source_shortcode=source_shortcode, destination=destination,
+        source_shortcode=binding.source_party, destination=binding.destination_party,
     )
     attested = validate_provider_query(expected, observation)
-    if attested.transaction_id:
-        # Neither another payment nor another leg of this same payment may
-        # silently reuse a provider transaction identifier.
-        collisions = db.scalars(select(MpesaPassThroughTransaction).where(
-            or_(
-                MpesaPassThroughTransaction.funding_provider_id == attested.transaction_id,
-                MpesaPassThroughTransaction.onward_provider_id == attested.transaction_id,
-                MpesaPassThroughTransaction.refund_provider_id == attested.transaction_id,
+    if attested.outcome == "succeeded":
+        if not attested.transaction_id:
+            raise TransactionError("Successful movement lacks provider ID")
+        existing_receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+            MpesaPassThroughProviderReceipt.intent_id == intent.id,
+        ))
+        digest = evidence_digest(attested)
+        if existing_receipt:
+            if (existing_receipt.provider != "mpesa" or
+                    existing_receipt.provider_transaction_id != attested.transaction_id or
+                    existing_receipt.canonical_evidence_hash != digest):
+                raise TransactionError("Conflicting receipt for reserved movement")
+        else:
+            # The unique (provider, transaction_id) constraint is authoritative
+            # even for concurrent workers. On IntegrityError the entire caller
+            # transaction must be rolled back and investigated, never replayed.
+            receipt = MpesaPassThroughProviderReceipt(
+                intent_id=intent.id, provider="mpesa",
+                provider_transaction_id=attested.transaction_id,
+                canonical_evidence_hash=digest,
             )
-        )).all()
-        for other in collisions:
-            if other.id != row.id or getattr(other, leg + "_provider_id") != attested.transaction_id:
-                raise TransactionError("Provider identifier already used for another movement")
+            db.add(receipt)
+            db.flush()
     record_verified_evidence(
         db, merchant_id=merchant_id, application_id=application_id, record_id=row.id,
         leg=leg, reference=intent.reference, status=attested.outcome,
