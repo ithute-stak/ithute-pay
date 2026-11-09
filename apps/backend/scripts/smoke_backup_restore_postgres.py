@@ -220,7 +220,7 @@ with create_engine(dest, pool_pre_ping=True).connect() as db:
         "ithutepay-postgresql-backup-integrity"
     )
     versions = db.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
-    assert versions == ["0014_tenant_push_manual_retries"], versions
+    assert versions == ["0015_mpesa_pass_through_state"], versions
     inspector = inspect(db)
     assert inspector.has_table("tenant_reconciliation_push_deliveries")
     columns = {column["name"] for column in inspector.get_columns(
