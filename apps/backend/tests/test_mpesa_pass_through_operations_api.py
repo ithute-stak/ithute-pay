@@ -116,13 +116,13 @@ def test_recovery_endpoint_only_returns_scoped_safe_metadata(client, admin_token
 
 def test_merchant_user_is_denied_even_when_logged_in(client):
     with SessionLocal() as db:
-        user = User(email="limited@pt-api.test", full_name="Limited",
+        user = User(email="limited-pt-api@example.com", full_name="Limited",
                     password_hash=hash_password("Password123!"),
                     role="merchant_admin")
         db.add(user); db.commit()
     client.cookies.clear()
     response = client.post("/api/v1/auth/login",
-                           json={"email":"limited@pt-api.test",
+                           json={"email":"limited-pt-api@example.com",
                                  "password":"Password123!"})
     assert response.status_code == 200, response.text
     token = response.json()["access_token"]
