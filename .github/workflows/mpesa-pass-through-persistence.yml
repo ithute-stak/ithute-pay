@@ -1,0 +1,41 @@
+name: M-Pesa pass-through persistence tests
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/database/models/mpesa_pass_through.py'
+      - 'apps/backend/database/models/__init__.py'
+      - 'apps/backend/services/mpesa_pass_through_store.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_store.py'
+      - '.github/workflows/mpesa-pass-through-persistence.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/database/models/mpesa_pass_through.py'
+      - 'apps/backend/database/models/__init__.py'
+      - 'apps/backend/services/mpesa_pass_through_store.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_store.py'
+      - '.github/workflows/mpesa-pass-through-persistence.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  persistence:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend dependencies
+        working-directory: apps/backend
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install 'pytest>=8,<10'
+      - name: Run transactional persistence tests
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_mpesa_pass_through_store.py
