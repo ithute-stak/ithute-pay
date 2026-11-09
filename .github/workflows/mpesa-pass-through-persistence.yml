@@ -34,6 +34,9 @@ jobs:
         run: |
           python -m pip install -r requirements.txt
           python -m pip install 'pytest>=8,<10'
+      - name: Recreate disposable SQLite test database
+        working-directory: apps/backend
+        run: rm -f tests/paybridge_test.db tests/paybridge_test.db-wal tests/paybridge_test.db-shm
       - name: Run transactional persistence tests
         working-directory: apps/backend
         env:
