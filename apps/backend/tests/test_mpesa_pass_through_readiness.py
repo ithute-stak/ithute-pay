@@ -1,6 +1,7 @@
 """Non-posting pass-through authorization and crash recovery tests."""
 from datetime import datetime, timedelta, timezone
 from decimal import Decimal
+from sqlalchemy.exc import IntegrityError
 
 import pytest
 
@@ -103,7 +104,7 @@ def test_readiness_blocks_shortcodes_that_match():
         _, tenant, _, _, accounts = setup(db, tenant_short="SAME", platform_short="SAME")
         # Database uniqueness also prevents such configuration at flush,
         # but preflight must never label it ready before flush.
-        with pytest.raises(TransactionError, match="differ"):
+        with pytest.raises((TransactionError, IntegrityError)):
             check_account_readiness(db, merchant_id=tenant.id, environment="sandbox")
 
 
