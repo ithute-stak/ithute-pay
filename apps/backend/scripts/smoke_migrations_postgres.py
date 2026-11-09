@@ -37,7 +37,7 @@ with engine.connect() as db:
     assert "manual_retries" in columns, columns
     assert "attempts" in columns, columns
     versions = db.execute(text("SELECT version_num FROM alembic_version")).scalars().all()
-    assert versions == ["0016_mpesa_pt_operation_intents"], versions
+    assert versions == ["0017_mpesa_pt_identity_receipts"], versions
     pt_columns = {column["name"] for column in inspect(db).get_columns("mpesa_pass_through_transactions")}
     assert {"merchant_id", "application_id", "idempotency_key", "funding_status", "onward_status", "refund_status"}.issubset(pt_columns), pt_columns
 alembic("upgrade", "head")

@@ -16,6 +16,9 @@ from database.models.loanhub_funding import LoanHubFundingProviderConfiguration
 from database.models.mandate import Mandate, MandateCharge
 from database.models.mpesa_pass_through import MpesaPassThroughTransaction
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
+from database.models.mpesa_pass_through_identity import (
+    MpesaPassThroughLegIdentity, MpesaPassThroughProviderReceipt,
+)
 from database.models.operations import (
     ConnectorConfiguration, MerchantComplianceProfile, ReconciliationRun,
     RiskDecision, RiskRule, SettlementBatch,
@@ -42,7 +45,7 @@ __all__ = [
     'ApiKey', 'Application', 'AuditLog', 'AuthSession', 'CheckoutSession', 'Event',
     'FeeRule', 'FundingLedgerEntry', 'IdempotencyRecord', 'JournalEntry', 'JournalLine', 'LedgerAccount',
     'LedgerEntry', 'Mandate', 'MandateCharge', 'Merchant', 'MerchantFundingAccount', 'PaymentAuthorization',
-    'PaymentIntent', 'PaymentLink', 'Payout', 'MpesaPassThroughTransaction', 'MpesaPassThroughOperationIntent', 'ProviderConfiguration', 'ProviderOperation',
+    'PaymentIntent', 'PaymentLink', 'Payout', 'MpesaPassThroughTransaction', 'MpesaPassThroughOperationIntent', 'MpesaPassThroughLegIdentity', 'MpesaPassThroughProviderReceipt', 'ProviderConfiguration', 'ProviderOperation',
     'ProviderTransaction', 'ReconciliationItem', 'Reversal', 'Settlement', 'Transfer',
     'User', 'WebhookDelivery', 'WebhookEndpoint',
     'GatewayProviderConfiguration', 'MerchantGatewayProfile', 'MerchantRoutingKey',

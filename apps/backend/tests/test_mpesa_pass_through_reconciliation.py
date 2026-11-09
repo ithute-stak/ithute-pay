@@ -7,12 +7,14 @@ from decimal import Decimal
 
 import pytest
 from sqlalchemy import func, select
+from sqlalchemy.exc import IntegrityError
 from database.models import Application, JournalEntry, Merchant
 from database.session import SessionLocal
 from services.mpesa_pass_through_evidence import (
     ExpectedMovement, ProviderQueryObservation, validate_provider_query,
 )
 from services.mpesa_pass_through_lifecycle import TransactionError
+from services.mpesa_pass_through_identity import bind_leg_identity
 from services.mpesa_pass_through_outbox import reserve_operation
 from services.mpesa_pass_through_quotes import quote
 from services.mpesa_pass_through_reconciliation import reconcile_authenticated_query
@@ -46,6 +48,7 @@ def new(db, suffix):
 
 def funding(db, ids, ref="fund-a", txid="vodacom-f-1"):
     reserve_operation(db, **ids, leg="funding", reference=ref)
+    bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
     return reconcile_authenticated_query(
         db, **ids, leg="funding", source_shortcode="YYYY",
         destination="XXXX", observation=observation(ref=ref, txid=txid),
@@ -54,6 +57,7 @@ def funding(db, ids, ref="fund-a", txid="vodacom-f-1"):
 
 def payout(db, ids, ref="payout-a", txid="vodacom-p-1", status="succeeded"):
     reserve_operation(db, **ids, leg="onward", reference=ref)
+    bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="26659000000")
     return reconcile_authenticated_query(
         db, **ids, leg="onward", source_shortcode="XXXX",
         destination="26659000000",
@@ -115,7 +119,8 @@ def test_duplicate_provider_id_across_legs_is_rejected():
         ids = new(db, "duplicate-leg")
         funding(db, ids)
         reserve_operation(db, **ids, leg="onward", reference="payout-other")
-        with pytest.raises(TransactionError, match="already used"):
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="26659000000")
+        with pytest.raises(IntegrityError):
             reconcile_authenticated_query(
                 db, **ids, leg="onward", source_shortcode="XXXX",
                 destination="26659000000",
@@ -155,6 +160,7 @@ def test_wrong_amount_never_posts_a_fee():
     with SessionLocal() as db:
         ids = new(db, "bad-value")
         reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
         with pytest.raises(TransactionError, match="amount"):
             reconcile_authenticated_query(
                 db, **ids, leg="funding", source_shortcode="YYYY",

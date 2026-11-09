@@ -1,0 +1,48 @@
+name: M-Pesa pass-through immutable identity
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/database/models/mpesa_pass_through_identity.py'
+      - 'apps/backend/services/mpesa_pass_through_identity.py'
+      - 'apps/backend/services/mpesa_pass_through_reconciliation.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_identity.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_reconciliation.py'
+      - 'apps/backend/alembic/versions/0017_mpesa_pt_identity_receipts.py'
+      - '.github/workflows/mpesa-pass-through-identity.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/database/models/mpesa_pass_through_identity.py'
+      - 'apps/backend/services/mpesa_pass_through_identity.py'
+      - 'apps/backend/services/mpesa_pass_through_reconciliation.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_identity.py'
+      - 'apps/backend/tests/test_mpesa_pass_through_reconciliation.py'
+      - 'apps/backend/alembic/versions/0017_mpesa_pt_identity_receipts.py'
+      - '.github/workflows/mpesa-pass-through-identity.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  identity:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install backend tests
+        working-directory: apps/backend
+        run: |
+          python -m pip install -r requirements.txt
+          python -m pip install 'pytest>=8,<10'
+      - name: Reset disposable SQLite database
+        working-directory: apps/backend
+        run: rm -f tests/paybridge_test.db tests/paybridge_test.db-wal tests/paybridge_test.db-shm
+      - name: Validate immutable identity and provider receipt behavior
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_mpesa_pass_through_identity.py tests/test_mpesa_pass_through_reconciliation.py
