@@ -87,12 +87,17 @@ def _existing_or_post(
                 actual != expected_codes or existing.status != "posted"):
             raise TransactionError("Existing pass-through journal does not match verified evidence")
         return existing
-    return post_journal(
+    entry = post_journal(
         db, merchant_id=row.merchant_id, application_id=row.application_id,
         source_type=SOURCE, source_id=row.id, reference=key,
         description="Verified M-Pesa pass-through " + event,
         currency=row.currency, lines=lines,
     )
+    # Ledger helper leaves JournalLine and compatibility LedgerEntry pending.
+    # Flush all legs before any balance check or subsequent posting, while
+    # keeping final commit/rollback entirely with the trusted caller.
+    db.flush()
+    return entry
 
 
 def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str,
