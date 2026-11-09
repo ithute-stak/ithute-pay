@@ -71,3 +71,28 @@ def test_upgrade_is_isolated_and_enforces_idempotency_and_amounts():
         assert migration.TABLE not in sa.inspect(connection).get_table_names()
         assert "merchants" in sa.inspect(connection).get_table_names()
         assert "applications" in sa.inspect(connection).get_table_names()
+
+
+
+def test_existing_bootstrap_table_is_validated_not_recreated():
+    engine = sa.create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        setup_parents(connection)
+        migration = load_migration()
+        migration.op = Operations(MigrationContext.configure(connection))
+        migration.upgrade()
+        migration.upgrade()
+        assert migration.TABLE in sa.inspect(connection).get_table_names()
+
+
+def test_incomplete_bootstrap_table_fails_closed():
+    engine = sa.create_engine("sqlite+pysqlite:///:memory:")
+    with engine.begin() as connection:
+        setup_parents(connection)
+        connection.exec_driver_sql(
+            "CREATE TABLE mpesa_pass_through_transactions (id VARCHAR(36) PRIMARY KEY)"
+        )
+        migration = load_migration()
+        migration.op = Operations(MigrationContext.configure(connection))
+        with pytest.raises(RuntimeError, match="schema validation"):
+            migration.upgrade()
