@@ -87,6 +87,7 @@ def test_blocked_readiness(change):
         elif change == "shared_custody":
             settings = db.query(PlatformMerchantSettings).filter_by(merchant_id=master.id).one()
             settings.shared_custody_enabled = True
+        db.flush()
         with pytest.raises(TransactionError):
             check_account_readiness(db, merchant_id=tenant.id, environment="sandbox")
 
@@ -95,17 +96,18 @@ def test_readiness_blocks_unapproved_agreement():
     with SessionLocal() as db:
         _, tenant, _, agreement, _ = setup(db)
         agreement.status = "draft"
+        db.flush()
         with pytest.raises(TransactionError, match="agreement"):
             check_account_readiness(db, merchant_id=tenant.id, environment="sandbox")
 
 
 def test_readiness_blocks_shortcodes_that_match():
     with SessionLocal() as db:
-        _, tenant, _, _, accounts = setup(db, tenant_short="SAME", platform_short="SAME")
-        # Database uniqueness also prevents such configuration at flush,
-        # but preflight must never label it ready before flush.
-        with pytest.raises((TransactionError, IntegrityError)):
-            check_account_readiness(db, merchant_id=tenant.id, environment="sandbox")
+        # Duplicate ownership cannot even be persisted; this is stronger
+        # than an application-level preflight and must fail at DB flush.
+        with pytest.raises(IntegrityError):
+            setup(db, tenant_short="SAME", platform_short="SAME")
+        db.rollback()
 
 
 def test_recovery_only_queries_original_reference_and_never_sends():
