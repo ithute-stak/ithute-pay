@@ -18,6 +18,46 @@ TABLE = "mpesa_pass_through_transactions"
 
 
 def upgrade() -> None:
+    # Initial bootstrap migrations may already have created this new model
+    # from Base.metadata. Never attempt CREATE TABLE twice; validate before
+    # adopting it to catch real schema drift instead of silently skipping.
+    inspector = sa.inspect(op.get_bind())
+    if TABLE in inspector.get_table_names():
+        columns = {column["name"] for column in inspector.get_columns(TABLE)}
+        required_columns = {
+            "id", "merchant_id", "application_id", "idempotency_key",
+            "request_hash", "agreement_version", "direction", "currency",
+            "principal", "provider_cost", "platform_fee", "funding_amount",
+            "onward_amount", "quote_snapshot", "funding_status",
+            "onward_status", "refund_status", "funding_reference",
+            "onward_reference", "refund_reference", "funding_provider_id",
+            "onward_provider_id", "refund_provider_id",
+            "funding_evidence_hash", "onward_evidence_hash",
+            "refund_evidence_hash", "version", "created_at", "updated_at",
+        }
+        checks = {c["name"] for c in inspector.get_check_constraints(TABLE)}
+        uniques = {c["name"] for c in inspector.get_unique_constraints(TABLE)}
+        indexes = {i["name"] for i in inspector.get_indexes(TABLE)}
+        fks = {
+            tuple(fk.get("constrained_columns", ()))
+            for fk in inspector.get_foreign_keys(TABLE)
+        }
+        if (
+            not required_columns.issubset(columns)
+            or "uq_mpesa_pt_app_idempotency" not in uniques
+            or not {
+                "ck_mpesa_pt_direction", "ck_mpesa_pt_currency",
+                "ck_mpesa_pt_amounts", "ck_mpesa_pt_fees",
+                "ck_mpesa_pt_version", "ck_mpesa_pt_leg_status",
+            }.issubset(checks)
+            or not {
+                "ix_mpesa_pass_through_transactions_merchant_id",
+                "ix_mpesa_pass_through_transactions_application_id",
+            }.issubset(indexes)
+            or not {("merchant_id",), ("application_id",)}.issubset(fks)
+        ):
+            raise RuntimeError("Existing pass-through table fails migration schema validation")
+        return
     op.create_table(
         TABLE,
         sa.Column("id", sa.String(36), primary_key=True),
