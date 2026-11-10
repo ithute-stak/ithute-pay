@@ -14,8 +14,44 @@ depends_on = None
 
 def upgrade():
     inspector = sa.inspect(op.get_bind())
-    if "mpesa_pt_monitor_runs" in inspector.get_table_names() or "mpesa_pt_monitor_alerts" in inspector.get_table_names():
-        raise RuntimeError("Monitoring tables already exist; inspect schema before proceeding")
+    tables = set(inspector.get_table_names())
+    expected = {
+        "mpesa_pt_monitor_runs": {
+            "columns": {"id", "merchant_id", "application_id", "bucket_utc", "total",
+                        "review_count", "escalation_count", "critical_count",
+                        "page_limited", "created_at", "updated_at"},
+            "unique": "uq_mpesa_pt_monitor_run_scope_bucket",
+            "check": "ck_mpesa_pt_monitor_nonnegative",
+            "index": "ix_mpesa_pt_monitor_runs_merchant_id",
+        },
+        "mpesa_pt_monitor_alerts": {
+            "columns": {"id", "merchant_id", "application_id", "intent_id", "severity",
+                        "status", "acknowledged_by_user_id", "acknowledged_at",
+                        "created_at", "updated_at"},
+            "unique": "uq_mpesa_pt_monitor_alert_intent_severity",
+            "check": "ck_mpesa_pt_monitor_alert_status",
+            "index": "ix_mpesa_pt_monitor_alerts_merchant_id",
+        },
+    }
+    present = set(expected).intersection(tables)
+    if present:
+        if present != set(expected):
+            raise RuntimeError("Incomplete pre-existing monitoring schema")
+        for table, contract in expected.items():
+            columns = {x["name"] for x in inspector.get_columns(table)}
+            uniques = {x["name"] for x in inspector.get_unique_constraints(table)}
+            checks = {x["name"] for x in inspector.get_check_constraints(table)}
+            indexes = {x["name"] for x in inspector.get_indexes(table)}
+            if not (contract["columns"].issubset(columns)
+                    and contract["unique"] in uniques
+                    and contract["check"] in checks
+                    and contract["index"] in indexes):
+                raise RuntimeError("Pre-existing monitoring schema is not approved: " + table)
+        if "ck_mpesa_pt_monitor_alert_severity" not in {
+            c["name"] for c in inspector.get_check_constraints("mpesa_pt_monitor_alerts")
+        }:
+            raise RuntimeError("Missing severity check on existing monitoring alerts")
+        return
     op.create_table(
         "mpesa_pt_monitor_runs",
         sa.Column("id", sa.String(36), primary_key=True),
