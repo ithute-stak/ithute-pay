@@ -89,7 +89,7 @@ def test_monitor_tenant_isolation():
 def test_monitor_endpoint_auth_and_policy(client, admin_token):
     url = ROOT + "/recovery/monitor"
     query = {"merchant_id": "a"*36, "application_id": "b"*36}
-    assert client.get(url, params=query).status_code in (401, 403)
+    # admin_token fixture logs into the shared client and leaves a session cookie.\n    client.cookies.clear()\n    assert client.get(url, params=query).status_code in (401, 403)
     h = {"Authorization": "Bearer " + admin_token}
     bad = client.get(url, params={**query,
         "review_after_seconds": 3600, "escalate_after_seconds": 300}, headers=h)
