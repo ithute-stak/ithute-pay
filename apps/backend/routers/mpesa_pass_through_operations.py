@@ -273,3 +273,31 @@ def operational_alert_summary(
         "notices": {k: notices.get(k, 0) for k in ("prepared", "cancelled")},
         "delivery_enabled": False, "live_pass_through_enabled": False,
     }
+
+
+# Phase 16: monitoring is computed from persisted records, not a dispatcher.
+from services.mpesa_pass_through_monitor import MonitorPolicy, monitor_recovery
+
+
+@router.get("/recovery/monitor")
+def recovery_monitor(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    review_after_seconds: int = Query(default=300, ge=30, le=2592000),
+    escalate_after_seconds: int = Query(default=3600, ge=31, le=2592000),
+    critical_after_seconds: int = Query(default=86400, ge=32, le=2592000),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    try:
+        policy = MonitorPolicy(
+            review_after_seconds=review_after_seconds,
+            escalate_after_seconds=escalate_after_seconds,
+            critical_after_seconds=critical_after_seconds,
+        )
+        return monitor_recovery(
+            db, merchant_id=merchant_id, application_id=application_id,
+            policy=policy, limit=limit,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
