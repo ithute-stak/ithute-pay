@@ -301,3 +301,91 @@ def recovery_monitor(
         )
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+
+# Phase 17 persistent operator monitoring (no money or provider calls).
+from datetime import datetime, timezone
+from services.mpesa_pt_monitor_history import (
+    capture_monitor_snapshot, acknowledge_monitor_alert,
+    list_monitor_alerts, list_monitor_runs,
+)
+
+
+class CaptureMonitorRequest(BaseModel):
+    merchant_id: str = Field(min_length=36, max_length=36)
+    application_id: str = Field(min_length=36, max_length=36)
+
+
+class AcknowledgeMonitorRequest(BaseModel):
+    merchant_id: str = Field(min_length=36, max_length=36)
+    application_id: str = Field(min_length=36, max_length=36)
+
+
+@router.post("/monitoring/capture", status_code=201)
+def capture_monitoring(
+    payload: CaptureMonitorRequest,
+    db: Session = Depends(get_db), user: User = Depends(_operator),
+):
+    clock = datetime.now(timezone.utc)
+    try:
+        run = capture_monitor_snapshot(
+            db, merchant_id=payload.merchant_id, application_id=payload.application_id,
+            actor_user_id=user.id, bucket_utc=clock.strftime("%Y-%m-%dT%H:00Z"),
+            now=clock,
+        )
+        db.commit()
+        db.refresh(run)
+    except (TransactionError, ValueError) as exc:
+        db.rollback()
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"id": run.id, "bucket_utc": run.bucket_utc, "total": run.total,
+            "page_limited": run.page_limited, "delivery_enabled": False}
+
+
+@router.get("/monitoring/history")
+def monitoring_history(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    return [{
+        "id": x.id, "bucket_utc": x.bucket_utc, "total": x.total,
+        "review": x.review_count, "escalate": x.escalation_count,
+        "critical": x.critical_count, "page_limited": x.page_limited,
+    } for x in list_monitor_runs(db, merchant_id=merchant_id,
+                               application_id=application_id, limit=limit)]
+
+
+@router.get("/monitoring/alerts")
+def monitoring_alerts(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    limit: int = Query(default=100, ge=1, le=500),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    return [{
+        "id": x.id, "intent_id": x.intent_id,
+        "severity": x.severity, "status": x.status,
+        "acknowledged_at": x.acknowledged_at.isoformat() if x.acknowledged_at else None,
+    } for x in list_monitor_alerts(db, merchant_id=merchant_id,
+                                application_id=application_id, limit=limit)]
+
+
+@router.post("/monitoring/alerts/{alert_id}/acknowledge")
+def acknowledge_monitoring_alert(
+    alert_id: str, payload: AcknowledgeMonitorRequest,
+    db: Session = Depends(get_db), user: User = Depends(_operator),
+):
+    try:
+        alert = acknowledge_monitor_alert(
+            db, merchant_id=payload.merchant_id,
+            application_id=payload.application_id, alert_id=alert_id,
+            actor_user_id=user.id,
+        )
+        db.commit()
+        db.refresh(alert)
+    except TransactionError as exc:
+        db.rollback()
+        raise HTTPException(status_code=404, detail="Monitoring alert unavailable") from exc
+    return {"id": alert.id, "status": alert.status, "delivery_enabled": False}
