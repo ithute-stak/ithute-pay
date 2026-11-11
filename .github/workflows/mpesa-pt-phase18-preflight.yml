@@ -31,6 +31,9 @@ jobs:
         run: |
           python -m pip install -r apps/backend/requirements.txt
           python -m pip install 'pytest>=8,<10'
+      - name: Reset disposable SQLite test database
+        working-directory: apps/backend
+        run: rm -f tests/paybridge_test.db tests/paybridge_test.db-wal tests/paybridge_test.db-shm
       - name: Verify fail-closed controls
         working-directory: apps/backend
         env:
