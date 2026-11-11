@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: ithute_test
           POSTGRES_PASSWORD: isolated_ci_password
