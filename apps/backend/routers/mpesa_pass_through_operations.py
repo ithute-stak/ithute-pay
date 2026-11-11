@@ -389,3 +389,18 @@ def acknowledge_monitoring_alert(
         db.rollback()
         raise HTTPException(status_code=404, detail="Monitoring alert unavailable") from exc
     return {"id": alert.id, "status": alert.status, "delivery_enabled": False}
+
+
+# Phase 19: operator-facing persisted monitoring overview; never executes payments.
+from services.mpesa_pt_operator_summary import operator_monitor_summary
+
+
+@router.get("/monitoring/operator-summary")
+def monitoring_operator_summary(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    return operator_monitor_summary(
+        db, merchant_id=merchant_id, application_id=application_id,
+    )
