@@ -1,0 +1,51 @@
+name: M-Pesa pass-through Phase 18 monitor release preflight
+
+on:
+  pull_request:
+    paths:
+      - 'apps/backend/scripts/mpesa_pt_monitor_preflight.py'
+      - 'apps/backend/tests/test_mpesa_pt_monitor_preflight.py'
+      - 'docs/MPESA_PT_PHASE18_RELEASE_GATE.md'
+      - '.github/workflows/mpesa-pt-phase18-preflight.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'apps/backend/scripts/mpesa_pt_monitor_preflight.py'
+      - 'apps/backend/tests/test_mpesa_pt_monitor_preflight.py'
+      - 'docs/MPESA_PT_PHASE18_RELEASE_GATE.md'
+      - '.github/workflows/mpesa-pt-phase18-preflight.yml'
+
+permissions:
+  contents: read
+
+jobs:
+  offline-preflight:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install pytest
+        run: python -m pip install 'pytest>=8,<10'
+      - name: Verify fail-closed controls
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+        run: python -m pytest -q tests/test_mpesa_pt_monitor_preflight.py
+      - name: Check passive default mode
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+        run: python scripts/mpesa_pt_monitor_preflight.py
+      - name: Reject accidental unapproved activation
+        working-directory: apps/backend
+        env:
+          PYTHONPATH: .
+          MPESA_PT_MONITOR_SCHEDULER_ENABLED: 'true'
+        run: |
+          if python scripts/mpesa_pt_monitor_preflight.py; then
+            echo 'Unsafe scheduler preflight permitted enablement' >&2
+            exit 1
+          fi
