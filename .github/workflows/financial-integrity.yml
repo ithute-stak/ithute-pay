@@ -100,11 +100,11 @@ jobs:
         run: |
           sudo apt-get update
           sudo apt-get install -y postgresql-client-16
+          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - name: Verify PostgreSQL backup and restore on disposable databases
         working-directory: apps/backend
         env:
           CI_RESTORE_EVIDENCE_PATH: disposable-restore-evidence.json
-          PATH: /usr/lib/postgresql/16/bin:${{ env.PATH }}
         run: |
           /usr/lib/postgresql/16/bin/pg_dump --version
           /usr/lib/postgresql/16/bin/pg_restore --version
