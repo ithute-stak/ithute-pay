@@ -25,7 +25,7 @@ jobs:
     timeout-minutes: 20
     services:
       postgres:
-        image: postgres:16
+        image: postgres:18
         env:
           POSTGRES_USER: ithute_test
           POSTGRES_PASSWORD: isolated_ci_password
@@ -96,18 +96,13 @@ jobs:
           PY
           DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \
             python scripts/smoke_migrations_postgres.py
-      - name: Install PostgreSQL 16 client for PostgreSQL 16 service
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y postgresql-client-16
-          echo /usr/lib/postgresql/16/bin >> "$GITHUB_PATH"
       - name: Verify PostgreSQL backup and restore on disposable databases
         working-directory: apps/backend
         env:
           CI_RESTORE_EVIDENCE_PATH: disposable-restore-evidence.json
         run: |
-          /usr/lib/postgresql/16/bin/pg_dump --version
-          /usr/lib/postgresql/16/bin/pg_restore --version
+          pg_dump --version
+          pg_restore --version
           DATABASE_URL=postgresql+psycopg://ithute_test:isolated_ci_password@127.0.0.1:5432/ithute_migration_smoke \
             python scripts/smoke_backup_restore_postgres.py
       - name: Validate non-secret disposable restore evidence
