@@ -165,6 +165,7 @@ jobs:
             tests/test_transaction_evidence_assessment.py \
             tests/test_scoped_transaction_evidence.py \
             tests/test_mpesa_reported_amount_normalization.py \
+            tests/test_mpesa_sandbox_evidence_query.py \
             tests/test_provider_operation_terminal_state.py \
             tests/test_callback_concurrency_contract.py \
             tests/test_payment_fault_injection.py
