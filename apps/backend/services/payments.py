@@ -252,6 +252,25 @@ async def _execute_funded_payout(db: Session, payout: Payout, tx: ProviderTransa
         raise HTTPException(status_code=409, detail="LoanHub payout fee must be merchant-paid")
     required = Decimal(payout.amount) + Decimal(fee.amount)
     metadata = dict(payout.metadata_json or {})
+    if payout.status == "funding":
+        # A funding callback must not trigger a payout until its original
+        # provider operation has independently confirmed success.
+        funding_id = str(metadata.get("direct_funding_operation_id") or "")
+        funding_operation = db.get(ProviderOperation, funding_id) if funding_id else None
+        if not funding_operation or funding_operation.status != "succeeded":
+            raise HTTPException(status_code=409, detail="Direct funding is not confirmed")
+    # Persist a single atomic ownership claim before any payout provider I/O.
+    # Replays of processing, unknown, or completed payouts cannot send twice.
+    claimed = db.execute(
+        update(Payout)
+        .where(Payout.id == payout.id, Payout.status.in_(("created", "funding")))
+        .values(status="processing")
+        .execution_options(synchronize_session="fetch")
+    ).rowcount
+    if claimed != 1:
+        db.rollback()
+        db.refresh(payout)
+        return payout
     reservation_tx = str(metadata.get("funding_reservation_transaction_id") or "")
     if reservation_tx != tx.id:
         reserve_payout(db, account=account, payout_id=payout.id, provider_transaction_id=tx.id, amount=required)
@@ -263,11 +282,19 @@ async def _execute_funded_payout(db: Session, payout: Payout, tx: ProviderTransa
     payout.status="processing"; db.add(payout); db.commit()
     provider = get_provider(payout.provider, db=db, application_id=payout.application_id)
     require_provider_capability(provider,"payout")
-    result = await provider.payout(
-        amount=payout.amount, currency=payout.currency, phone=_provider_phone(payout.provider,payout.destination_phone),
-        transaction_reference=tx.transaction_reference, third_party_conversation_id=tx.third_party_conversation_id,
-        description=payout.description or payout.reference,
-    )
+    try:
+        result = await provider.payout(
+            amount=payout.amount, currency=payout.currency, phone=_provider_phone(payout.provider,payout.destination_phone),
+            transaction_reference=tx.transaction_reference, third_party_conversation_id=tx.third_party_conversation_id,
+            description=payout.description or payout.reference,
+        )
+    except (httpx.TimeoutException, httpx.TransportError):
+        # Funds may have moved despite a lost response. Preserve funding
+        # reservation and original correlation ID until reconciliation.
+        payout.status = "unknown"
+        tx.status = "unknown"
+        db.add(payout); db.add(tx); db.commit(); db.refresh(payout)
+        return payout
     apply_provider_result(db, transaction=tx, result=result)
     db.commit(); db.refresh(payout); return payout
 
