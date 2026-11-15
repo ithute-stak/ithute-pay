@@ -6,6 +6,9 @@ instruction; real source-of-truth attestation is still required.
 """
 from __future__ import annotations
 
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
 from database.models import ProviderTransaction
 from integrations.base import ProviderResult
 from services.provider_amount_evidence import assess_provider_amount
@@ -65,3 +68,25 @@ def assess_transaction_evidence(
         "automatic_finalization_enabled": False,
         "financial_action_authorized": False,
     }
+
+
+def assess_scoped_transaction_evidence(
+    db: Session, *, merchant_id: str, application_id: str,
+    transaction_id: str, result: ProviderResult,
+) -> dict:
+    """Read a single tenant-owned payment and compare evidence without writes.
+
+    Unlike transaction-wide provider queries, the caller supplies already
+    obtained evidence. This function cannot obtain fresh provider evidence.
+    """
+    transaction = db.scalar(
+        select(ProviderTransaction).where(
+            ProviderTransaction.id == transaction_id,
+            ProviderTransaction.merchant_id == merchant_id,
+            ProviderTransaction.application_id == application_id,
+            ProviderTransaction.resource_type.in_(("payment_intent", "payout")),
+        )
+    )
+    if transaction is None:
+        raise ValueError("C2B/B2C transaction unavailable in requested scope")
+    return assess_transaction_evidence(transaction=transaction, result=result)
