@@ -160,6 +160,17 @@ def apply_provider_result(db: Session, *, transaction: ProviderTransaction, resu
     # reclassify a released merchant funding reservation.
     if previous_status == "failed" and result.status != "failed":
         return
+    # The provider's transaction identity must not change after it has
+    # been recorded for this C2B/B2C instruction. A contradictory callback
+    # or query response is an investigation case, not payment success.
+    if transaction.resource_type in {"payment_intent", "payout"}:
+        recorded_id = str(transaction.provider_transaction_id or "").strip()
+        reported_id = str(result.transaction_id or "").strip()
+        if recorded_id and reported_id and recorded_id != reported_id:
+            raise HTTPException(
+                status_code=409,
+                detail="Provider transaction identity does not match original payment",
+            )
     transaction.status = result.status
     transaction.response_code = result.response_code
     transaction.response_description = result.response_description

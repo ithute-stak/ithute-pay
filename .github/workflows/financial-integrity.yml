@@ -160,6 +160,7 @@ jobs:
             tests/test_collection_dispatch_claim.py \
             tests/test_reconciliation_terminal_state.py \
             tests/test_c2b_b2c_terminal_payment_conflicts.py \
+            tests/test_c2b_b2c_provider_reference_identity.py \
             tests/test_provider_operation_terminal_state.py \
             tests/test_callback_concurrency_contract.py \
             tests/test_payment_fault_injection.py
