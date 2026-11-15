@@ -253,6 +253,24 @@ async def _execute_funded_payout(db: Session, payout: Payout, tx: ProviderTransa
     required = Decimal(payout.amount) + Decimal(fee.amount)
     metadata = dict(payout.metadata_json or {})
     funded_by_mpesa = metadata.get("funding_mode") == "direct_mpesa"
+    if funded_by_mpesa:
+        # The tenant funds a specific principal+fee amount. Fee rules may
+        # change later, but a confirmed old funding transfer must never pay
+        # against a new price or an altered principal.
+        try:
+            funded_fee = Decimal(str(metadata["gateway_fee_amount"]))
+            funded_total = Decimal(str(metadata["funding_debit_amount"]))
+            expected_total = Decimal(payout.amount) + Decimal(fee.amount)
+            valid_funding = (
+                funded_fee.is_finite() and funded_total.is_finite()
+                and funded_fee == Decimal(fee.amount)
+                and funded_total == expected_total
+                and funded_total > 0
+            )
+        except (KeyError, ValueError, ArithmeticError, TypeError):
+            valid_funding = False
+        if not valid_funding:
+            raise HTTPException(status_code=409, detail="Direct funding terms differ from approved payout amount and fee")
     if payout.status in {"funding", "funding_unknown"} and not funded_by_mpesa:
         raise HTTPException(status_code=409, detail="Unverified funding cannot dispatch payout")
     if funded_by_mpesa:
