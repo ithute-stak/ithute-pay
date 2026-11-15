@@ -155,7 +155,10 @@ def apply_provider_result(db: Session, *, transaction: ProviderTransaction, resu
     # likewise, a final failure is not reopened by an uncertain response.
     if previous_status == "succeeded" and result.status != "succeeded":
         return
-    if previous_status == "failed" and result.status in {"unknown", "processing"}:
+    # A failed customer payment or payout is terminal. Contradictory
+    # success must be manually investigated, not silently post revenue or
+    # reclassify a released merchant funding reservation.
+    if previous_status == "failed" and result.status != "failed":
         return
     transaction.status = result.status
     transaction.response_code = result.response_code
