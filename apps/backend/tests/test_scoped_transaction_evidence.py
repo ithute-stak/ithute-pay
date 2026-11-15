@@ -1,5 +1,6 @@
 """Scoped read-only C2B/B2C assessment cannot read other tenants' payments."""
 from decimal import Decimal
+import hashlib
 
 import pytest
 
@@ -20,7 +21,7 @@ def seed(suffix: str, resource="payout"):
             resource_type=resource, resource_id="synthetic-" + suffix,
             direction="inbound" if resource == "payment_intent" else "outbound",
             amount=Decimal("1000.00"), currency="LSL", status="unknown",
-            transaction_reference="EVID-" + suffix,
+            transaction_reference="EV-" + hashlib.sha256(suffix.encode()).hexdigest()[:12],
             third_party_conversation_id="EVID-CONV-" + suffix,
             provider_transaction_id="vodacom-" + suffix,
         )
