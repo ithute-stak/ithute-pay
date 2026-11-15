@@ -4,7 +4,7 @@ from decimal import Decimal
 
 from fastapi import HTTPException
 import httpx
-from sqlalchemy import select, update
+from sqlalchemy import select, update, func
 from sqlalchemy.orm import Session
 
 from database.models import (
@@ -433,6 +433,21 @@ def finalize_successful_reversal(db: Session, *, reversal: Reversal, transaction
 
 async def reverse_transaction(db: Session, *, transaction: ProviderTransaction, application_id: str, merchant_id: str, amount: Decimal | None, reason: str) -> Reversal:
     if transaction.status!="succeeded" or not transaction.provider_transaction_id: raise HTTPException(status_code=409,detail="Only a confirmed provider transaction can be reversed")
+    # Serialize reservations against the source transaction, not individual
+    # reversal rows: multiple workers must share one remaining-amount budget.
+    db.refresh(transaction, with_for_update=True)
+    if transaction.status != "succeeded" or transaction.reversed:
+        raise HTTPException(status_code=409, detail="Transaction cannot be reversed again")
+    reserved = db.scalar(select(func.coalesce(func.sum(Reversal.amount), 0)).where(
+        Reversal.provider_transaction_id == transaction.id,
+        Reversal.status.in_(("processing", "unknown", "succeeded")),
+    ))
+    remaining = Decimal(transaction.amount) - Decimal(reserved or 0)
+    reversal_amount = remaining if amount is None else Decimal(amount)
+    if not reversal_amount.is_finite() or reversal_amount <= 0 or reversal_amount > remaining:
+        raise HTTPException(status_code=409, detail="Reversal exceeds remaining confirmed amount")
+    if transaction.application_id != application_id or transaction.merchant_id != merchant_id:
+        raise HTTPException(status_code=403, detail="Transaction outside authorized merchant/application scope")
     resource = _transaction_resource(db, transaction)
     provider = (
         provider_for_resource(db, resource, provider_name=transaction.provider, application_id=transaction.application_id)
@@ -440,7 +455,6 @@ async def reverse_transaction(db: Session, *, transaction: ProviderTransaction, 
         else get_provider(transaction.provider,db=db,application_id=transaction.application_id)
     )
     require_provider_capability(provider,"reversal")
-    reversal_amount=Decimal(amount) if amount is not None else Decimal(transaction.amount)
     reversal=Reversal(public_id=public_id("rev"),application_id=application_id,merchant_id=merchant_id,provider_transaction_id=transaction.id,amount=reversal_amount,reason=reason,status="processing")
     db.add(reversal); db.flush(); operation=create_operation(db,merchant_id=merchant_id,application_id=application_id,provider=transaction.provider,operation_type="reversal",resource_type="reversal",resource_id=reversal.id); db.commit()
     provider_reference=transaction.provider_transaction_id
