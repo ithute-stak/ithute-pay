@@ -45,6 +45,7 @@ def test_matching_or_omitted_provider_reference_still_accepted(resource_type, re
     tx = SimpleNamespace(
         resource_type=resource_type, status="processing",
         confirmed_at=None, provider_transaction_id="original-provider-id",
+        conversation_id=None, reversed=False,
     )
     incoming = SimpleNamespace(
         status="processing", transaction_id=reported,
