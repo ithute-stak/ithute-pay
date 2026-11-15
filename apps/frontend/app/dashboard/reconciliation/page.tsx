@@ -1,5 +1,6 @@
 "use client";
 
+import Link from "next/link";
 import { PageHeader } from "@/components/dashboard/page-header";
 import { DataTable } from "@/components/dashboard/data-table";
 import { ProviderScopeBar, useProviderScopedRows } from "@/components/dashboard/provider-scope";
@@ -12,6 +13,7 @@ export default function Page() {
   return (
     <>
       <PageHeader title="Reconciliation" description="Compare gateway expectations against provider outcomes and identify unmatched or uncertain financial movements." />
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border bg-card p-4 text-sm"><div><p className="font-semibold">Tenant investigation work queue</p><p className="text-xs text-muted-foreground">Review persistent reconciliation cases, assigned investigators and discrepancies. Read-only and tenant scoped.</p></div><Link href="/dashboard/reconciliation/review-queue" className="rounded-xl bg-primary px-4 py-2 font-semibold text-primary-foreground hover:opacity-90">Open review queue</Link></div>
       <ProviderScopeBar noun="reconciliation records" />
       <DataTable title="reconciliation records" rows={rows} empty={isLoading ? "Loading reconciliation…" : "No reconciliation records for this provider yet."} columns={[
         { key: "provider", label: "Provider", render: (r: any) => <span className="capitalize">{r.provider}</span> },
