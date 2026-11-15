@@ -20,6 +20,7 @@ from services.fees import calculate_fee_details
 from services.funding import (
     credit_direct_funding, funding_account, release_payout_reservation, reserve_payout,
 )
+from services.direct_funding_amounts import verified_direct_funding_amount
 from services.funding_accounting import book_direct_company_funding
 from services.ledger import book_reversal, book_success
 from services.loanhub_funding import (
@@ -404,7 +405,7 @@ async def finalize_direct_funding_operation(db: Session, operation: ProviderOper
     # Consult the persisted operation state, not the stale callback result:
     # apply_operation_result intentionally rejects terminal-state regressions.
     if operation.status == "succeeded":
-        required = Decimal(str(metadata.get("funding_debit_amount") or 0))
+        required = verified_direct_funding_amount(payout)
         account = _payout_funding_account(db, payout, for_update=True)
         if not account or required <= 0:
             raise HTTPException(status_code=409, detail="Direct funding boundary is incomplete")
