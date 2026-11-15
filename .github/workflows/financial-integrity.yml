@@ -137,6 +137,7 @@ jobs:
             tests/test_direct_funding_single_dispatch.py \
             tests/test_direct_funding_recovery_preflight.py \
             tests/test_confirmed_funding_recovery_handoff.py \
+            tests/test_b2c_pass_through_ledger_evidence.py \
             tests/test_reversal_aggregate_bounds.py \
             tests/test_master_tenant_foundation.py \
             tests/test_tenant_management_api.py \
