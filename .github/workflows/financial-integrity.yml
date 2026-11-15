@@ -135,6 +135,7 @@ jobs:
             tests/test_settlement_single_dispatch.py \
             tests/test_funded_payout_single_dispatch.py \
             tests/test_direct_funding_single_dispatch.py \
+            tests/test_direct_funding_recovery_preflight.py \
             tests/test_reversal_aggregate_bounds.py \
             tests/test_master_tenant_foundation.py \
             tests/test_tenant_management_api.py \
