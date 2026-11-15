@@ -17,6 +17,11 @@ class ProviderResult:
     raw: dict[str, Any] = field(default_factory=dict)
     reversed: bool = False
     extra: dict[str, Any] = field(default_factory=dict)
+    # Optional normalized provider-reported monetary evidence. No adapter is
+    # assumed to supply these fields, and matching them alone is NOT proof
+    # of bank/provider settlement or authorization for money movement.
+    reported_amount: Decimal | None = None
+    reported_currency: str | None = None
 
 
 class PaymentProvider(Protocol):
