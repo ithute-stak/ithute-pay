@@ -106,3 +106,25 @@ def test_stale_failure_after_confirmed_funding_allows_only_original_handoff(monk
         ))
         assert payout.status == "processing"
     assert calls == ["credit", "journal", "handoff"]
+
+
+def test_late_success_cannot_override_confirmed_failed_funding(monkeypatch):
+    payout_id, operation_id = seed(
+        "failed-then-success", payout_status="funding_unknown",
+        operation_status="failed",
+    )
+    def forbidden(*args, **kwargs):
+        pytest.fail("contradictory success must not credit funding or dispatch payout")
+    monkeypatch.setattr(payments, "_payout_funding_account", forbidden)
+    monkeypatch.setattr(payments, "credit_direct_funding", forbidden)
+    monkeypatch.setattr(payments, "book_direct_company_funding", forbidden)
+    monkeypatch.setattr(payments, "_execute_funded_payout", forbidden)
+    with SessionLocal() as db:
+        payout = asyncio.run(payments.finalize_direct_funding_operation(
+            db, db.get(ProviderOperation, operation_id),
+            ProviderResult(accepted=True, status="succeeded", transaction_id="late-id"),
+        ))
+        assert payout.status == "failed"
+        operation = db.get(ProviderOperation, operation_id)
+        assert operation.status == "failed"
+        assert operation.provider_transaction_id is None
