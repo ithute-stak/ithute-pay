@@ -133,6 +133,7 @@ export const PLATFORM_NAV = [
   { href: "/dashboard/fees", label: "Fees & packages", description: "Pricing packages and merchant fee assignments.", icon: BadgeDollarSign },
   { href: "/dashboard/settlements", label: "Settlements", description: "Settlement instructions and merchant fund movement.", icon: Send },
   { href: "/dashboard/operations", label: "Operations & risk", description: "Risk controls and operational monitoring.", icon: ShieldAlert },
+  { href: "/dashboard/mpesa-recovery", label: "M-PESA recovery", description: "Read-only historical recovery alerts and snapshots.", icon: Activity },
   { href: "/dashboard/webhooks", label: "Webhooks & events", description: "Developer callbacks and delivery history.", icon: Webhook },
   { href: "/dashboard/audit", label: "Audit trail", description: "Who changed what and when.", icon: ScrollText },
   { href: "/dashboard/documentation", label: "Documentation", description: "Guides for administrators and integrators.", icon: BookOpenText },
