@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -89,6 +89,97 @@ def _event(db: Session, row: TenantReconciliationException, user: User, action: 
         resource_id=row.id, merchant_id=row.merchant_id,
         metadata={"reconciliation_item_id": row.reconciliation_item_id},
     )
+
+
+@router.get("/merchants/{merchant_id}/reconciliation/review-queue")
+def review_queue(
+    merchant_id: str,
+    investigation_status: str | None = Query(default=None),
+    classification: str | None = Query(default=None),
+    assigned_to: str | None = Query(default=None, max_length=36),
+    unassigned_only: bool = Query(default=False),
+    offset: int = Query(default=0, ge=0, le=100000),
+    limit: int = Query(default=50, ge=1, le=100),
+    db: Session = Depends(get_db),
+    user: User = Depends(get_current_active_user),
+):
+    """Paginated operator work queue using existing audited investigations.
+
+    Read-only projection: the authoritative reconciliation item and provider
+    transaction remain untouched. Existing exception case endpoints own every
+    state transition and maintain their history/audit trail.
+    """
+    _role(db, user, merchant_id)
+    if investigation_status and investigation_status not in STATUSES:
+        raise HTTPException(status_code=422, detail="Invalid investigation status")
+    if classification and classification not in CLASSIFICATIONS:
+        raise HTTPException(status_code=422, detail="Invalid classification")
+    if assigned_to and unassigned_only:
+        raise HTTPException(status_code=422, detail="Choose assignee or unassigned filter")
+    statement = select(TenantReconciliationException, ReconciliationItem).join(
+        ReconciliationItem,
+        ReconciliationItem.id == TenantReconciliationException.reconciliation_item_id,
+    ).where(
+        TenantReconciliationException.merchant_id == merchant_id,
+        ReconciliationItem.merchant_id == merchant_id,
+    )
+    if investigation_status:
+        statement = statement.where(
+            TenantReconciliationException.investigation_status == investigation_status)
+    if classification:
+        statement = statement.where(
+            TenantReconciliationException.classification == classification)
+    if assigned_to:
+        statement = statement.where(
+            TenantReconciliationException.assigned_user_id == assigned_to)
+    if unassigned_only:
+        statement = statement.where(
+            TenantReconciliationException.assigned_user_id.is_(None))
+    rows = db.execute(statement.order_by(
+        TenantReconciliationException.created_at.desc(),
+        TenantReconciliationException.id.desc(),
+    ).offset(offset).limit(limit + 1)).all()
+    items = []
+    for case, reconciliation in rows[:limit]:
+        mismatch = (
+            reconciliation.expected_amount is not None
+            and reconciliation.provider_amount is not None
+            and reconciliation.expected_amount != reconciliation.provider_amount
+        )
+        urgent = case.classification in {"amount_mismatch", "duplicate"} or mismatch
+        items.append({
+            "case_id": case.id,
+            "reconciliation_item_id": reconciliation.id,
+            "investigation_status": case.investigation_status,
+            "classification": case.classification,
+            "priority": "urgent" if urgent else "normal",
+            "assigned_user_id": case.assigned_user_id,
+            "provider": reconciliation.provider,
+            "currency": reconciliation.currency,
+            "expected_amount": (
+                str(reconciliation.expected_amount)
+                if reconciliation.expected_amount is not None else None
+            ),
+            "provider_amount": (
+                str(reconciliation.provider_amount)
+                if reconciliation.provider_amount is not None else None
+            ),
+            "reconciliation_status": reconciliation.status,
+            "created_at": case.created_at.isoformat(),
+            "manual_review_required": case.investigation_status != "closed",
+            "financial_action_authorized": False,
+        })
+    return {
+        "merchant_id": merchant_id,
+        "count": len(items),
+        "offset": offset,
+        "limit": limit,
+        "has_more": len(rows) > limit,
+        "items": items,
+        "read_only": True,
+        "financial_action_authorized": False,
+        "independent_settlement_verified": False,
+    }
 
 
 @router.get("/merchants/{merchant_id}/reconciliation/exceptions")
