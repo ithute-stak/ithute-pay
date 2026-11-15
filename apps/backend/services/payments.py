@@ -253,6 +253,8 @@ async def _execute_funded_payout(db: Session, payout: Payout, tx: ProviderTransa
     required = Decimal(payout.amount) + Decimal(fee.amount)
     metadata = dict(payout.metadata_json or {})
     funded_by_mpesa = metadata.get("funding_mode") == "direct_mpesa"
+    if payout.status in {"funding", "funding_unknown"} and not funded_by_mpesa:
+        raise HTTPException(status_code=409, detail="Unverified funding cannot dispatch payout")
     if funded_by_mpesa:
         # Funding completion, payout dispatch and reconciliation are separate
         # events. A prior funding timeout can be resolved as succeeded later.
