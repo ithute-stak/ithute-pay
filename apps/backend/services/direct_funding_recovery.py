@@ -44,6 +44,18 @@ async def reconcile_direct_funding_payout(db: Session, payout: Payout, operation
     or processing results are queried, never re-issued, so the lender cannot be
     debited twice after a timeout.
     """
+    # Do not accept an arbitrary operation supplied by another tenant or
+    # unrelated payout. Confirm exact ownership before querying the provider,
+    # updating ledgers, or allowing any payout handoff.
+    metadata = payout.metadata_json if isinstance(payout.metadata_json, dict) else {}
+    if (metadata.get("funding_mode") != "direct_mpesa"
+            or str(metadata.get("direct_funding_operation_id") or "") != operation.id
+            or operation.resource_type != "payout"
+            or operation.resource_id != payout.id
+            or operation.operation_type != "payout.direct_funding"
+            or operation.merchant_id != payout.merchant_id
+            or operation.application_id != payout.application_id):
+        raise ValueError("Direct funding operation does not match payout scope")
     if operation.status in {"processing", "unknown"}:
         config = direct_funding_configuration(db, payout)
         provider = build_direct_funding_provider(config)
