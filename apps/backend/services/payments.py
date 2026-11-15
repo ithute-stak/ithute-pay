@@ -365,25 +365,47 @@ async def _start_direct_funding(db: Session, payout: Payout, tx: ProviderTransac
 
 
 async def finalize_direct_funding_operation(db: Session, operation: ProviderOperation, result: ProviderResult) -> Payout:
-    apply_operation_result(db,operation,result)
-    payout = db.get(Payout,operation.resource_id)
-    if not payout: raise HTTPException(status_code=404, detail="Funding payout not found")
-    if result.status == "succeeded":
-        metadata = dict(payout.metadata_json or {})
+    payout = db.get(Payout, operation.resource_id)
+    if not payout:
+        raise HTTPException(status_code=404, detail="Funding payout not found")
+    metadata = dict(payout.metadata_json or {})
+    if (metadata.get("funding_mode") != "direct_mpesa"
+            or str(metadata.get("direct_funding_operation_id") or "") != operation.id
+            or operation.resource_type != "payout"
+            or operation.operation_type != "payout.direct_funding"
+            or operation.merchant_id != payout.merchant_id
+            or operation.application_id != payout.application_id
+            or operation.provider != payout.provider):
+        raise HTTPException(status_code=409, detail="Funding operation does not match payout")
+    apply_operation_result(db, operation, result)
+    # Provider callbacks can arrive after the payout was already dispatched.
+    # Never downgrade a completed/uncertain payout or repeat its funding credit.
+    if payout.status in {"processing", "unknown", "succeeded"}:
+        db.add(operation); db.commit(); db.refresh(payout)
+        return payout
+    # Consult the persisted operation state, not the stale callback result:
+    # apply_operation_result intentionally rejects terminal-state regressions.
+    if operation.status == "succeeded":
         required = Decimal(str(metadata.get("funding_debit_amount") or 0))
-        account = _payout_funding_account(db,payout,for_update=True)
-        if not account or required <= 0: raise HTTPException(status_code=409, detail="Direct funding boundary is incomplete")
-        credit_direct_funding(db,account=account,payout_id=payout.id,provider_operation_id=operation.id,amount=required)
-        book_direct_company_funding(db,operation,amount=required,currency=payout.currency)
+        account = _payout_funding_account(db, payout, for_update=True)
+        if not account or required <= 0:
+            raise HTTPException(status_code=409, detail="Direct funding boundary is incomplete")
+        credit_direct_funding(
+            db, account=account, payout_id=payout.id,
+            provider_operation_id=operation.id, amount=required,
+        )
+        book_direct_company_funding(db, operation, amount=required, currency=payout.currency)
         db.add(operation); db.commit()
-        tx = _payout_transaction(db,payout)
-        return await _execute_funded_payout(db,payout,tx)
-    if result.status == "failed":
-        payout.status="failed"; payout.failure_code=result.response_code; payout.failure_message=result.response_description
+        tx = _payout_transaction(db, payout)
+        return await _execute_funded_payout(db, payout, tx)
+    if operation.status == "failed":
+        payout.status = "failed"
+        payout.failure_code = operation.response_code
+        payout.failure_message = operation.response_description
     else:
-        payout.status="funding_unknown" if result.status=="unknown" else "funding"
-    db.add(operation); db.add(payout); db.commit(); db.refresh(payout); return payout
-
+        payout.status = "funding_unknown" if operation.status == "unknown" else "funding"
+    db.add(operation); db.add(payout); db.commit(); db.refresh(payout)
+    return payout
 
 async def execute_payout(db: Session, payout: Payout) -> Payout:
     if payout.status == "succeeded": return payout
