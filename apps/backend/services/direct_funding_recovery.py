@@ -8,6 +8,7 @@ from database.models import Payout, ProviderOperation
 from integrations.mpesa.contracts import require_provider_capability
 from services.events import publish_event
 from services.funding import credit_direct_funding, funding_account
+from services.direct_funding_amounts import verified_direct_funding_amount
 from services.funding_accounting import book_direct_company_funding
 from services.loanhub_funding import build_direct_funding_provider, direct_funding_configuration
 from services.payments import execute_payout
@@ -79,7 +80,7 @@ async def reconcile_direct_funding_payout(db: Session, payout: Payout, operation
         return payout
 
     metadata = dict(payout.metadata_json or {})
-    required = Decimal(str(metadata.get("funding_debit_amount") or 0))
+    required = verified_direct_funding_amount(payout)
     reference = str(metadata.get("funding_account_reference") or "").strip()
     account = funding_account(
         db, merchant_id=payout.merchant_id, application_id=payout.application_id,

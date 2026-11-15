@@ -23,7 +23,7 @@ def seed(suffix, *, payout_status="processing", operation_status="succeeded", li
             amount=Decimal("1000.00"), currency="LSL", provider="mpesa",
             destination_phone="26650000000", reference="CB-" + suffix,
             status=payout_status, metadata_json={"funding_mode": "direct_mpesa",
-                "funding_debit_amount": "1010.00"},
+                "funding_debit_amount": "1010.00", "gateway_fee_amount": "10.00"},
         )
         db.add(payout); db.flush()
         op = ProviderOperation(
