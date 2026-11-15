@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from decimal import Decimal
 from fastapi import HTTPException
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.orm import Session
 
 from database.models import MerchantGatewayProfile, MerchantSettlementAccount, PaymentIntent, ProviderOperation, ProviderTransaction, SettlementInstruction
@@ -108,7 +108,9 @@ def _destination(db: Session, row: SettlementInstruction) -> tuple[str | None, s
 
 
 async def execute_settlement_instruction(db: Session, row: SettlementInstruction) -> SettlementInstruction:
-    if row.status in {"succeeded", "not_required"}: return row
+    # A processing/unknown settlement must be reconciled using its existing
+    # provider reference, never silently sent a second time by this dispatcher.
+    if row.status in {"succeeded", "not_required", "processing", "unknown"}: return row
     if row.net_amount <= 0: row.status = "not_required"; db.add(row); db.commit(); return row
     destination_type, destination_reference = _destination(db, row)
     if not destination_type or not destination_reference: row.status = "unconfigured"; row.last_error = "Settlement destination is not configured"; db.add(row); db.commit(); return row
@@ -123,6 +125,27 @@ async def execute_settlement_instruction(db: Session, row: SettlementInstruction
     if destination_type == "business_shortcode": require_provider_capability(provider, "transfer")
     elif destination_type == "msisdn": require_provider_capability(provider, "payout")
     else: raise HTTPException(status_code=409, detail=f"Unsupported settlement destination type: {destination_type}")
+    # Claim exactly one eligible settlement before provider I/O.  This CAS is
+    # database-atomic across workers and prevents concurrent settlement sends.
+    # Explicit manual retries are allowed only after a recorded failed attempt.
+    eligible = ("pending", "ready", "held", "unconfigured", "failed")
+    claimed = db.execute(
+        update(SettlementInstruction)
+        .where(SettlementInstruction.id == row.id,
+               SettlementInstruction.status.in_(eligible))
+        .values(status="processing")
+        .execution_options(synchronize_session="fetch")
+    ).rowcount
+    if claimed != 1:
+        db.rollback()
+        db.refresh(row)
+        return row
+    if row.provider_operation_id:
+        previous = db.get(ProviderOperation, row.provider_operation_id)
+        if previous is None or previous.status != "failed":
+            db.rollback()
+            db.refresh(row)
+            return row
     operation = create_operation(db, merchant_id=row.merchant_id, application_id=row.application_id, provider=row.provider, operation_type="settlement.execute", resource_type="settlement_instruction", resource_id=row.id)
     operation.status = "processing"; db.add(operation)
     if company_funding: reserve_settlement(db, account=company_funding, settlement_id=row.id, provider_operation_id=operation.id, amount=row.net_amount)
