@@ -55,8 +55,14 @@ async def reconcile_direct_funding_payout(db: Session, payout: Payout, operation
             or operation.resource_id != payout.id
             or operation.operation_type != "payout.direct_funding"
             or operation.merchant_id != payout.merchant_id
-            or operation.application_id != payout.application_id):
+            or operation.application_id != payout.application_id
+            or operation.provider != payout.provider):
         raise ValueError("Direct funding operation does not match payout scope")
+    # Funding review is not permitted to overwrite a customer payout that
+    # has already been dispatched or resolved. Such a payout has a separate
+    # provider transaction and its own read-only reconciliation path.
+    if payout.status in {"processing", "unknown", "succeeded", "failed"}:
+        return payout
     if operation.status in {"processing", "unknown"}:
         config = direct_funding_configuration(db, payout)
         provider = build_direct_funding_provider(config)
