@@ -15,6 +15,7 @@ from services.payments import apply_provider_result
         ("succeeded", "processing"),
         ("failed", "unknown"),
         ("failed", "processing"),
+        ("failed", "succeeded"),
     ],
 )
 def test_stale_provider_response_does_not_downgrade_payment(previous, incoming):
