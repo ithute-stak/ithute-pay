@@ -132,6 +132,7 @@ jobs:
             tests/test_payment_lifecycle.py \
             tests/test_provider_operation_reservation.py \
             tests/test_transfer_dispatch_claim.py \
+            tests/test_settlement_single_dispatch.py \
             tests/test_master_tenant_foundation.py \
             tests/test_tenant_management_api.py \
             tests/test_merchant_network_admin.py \
