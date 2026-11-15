@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 from database.models import ProviderTransaction
 from integrations.mpesa.contracts import require_provider_capability
 from services.mpesa_sandbox_evidence_query import query_mpesa_sandbox_transaction_evidence
+from services.mpesa_reconciliation_operator_triage import triage_sandbox_review
 
 MAX_SANDBOX_REVIEW_BATCH = 10
 
@@ -81,7 +82,7 @@ async def assess_mpesa_sandbox_batch(
                 "evidence": report,
                 "financial_action_authorized": False,
             })
-    return {
+    report = {
         "merchant_id": merchant_id,
         "application_id": application_id,
         "count": len(items),
@@ -93,3 +94,5 @@ async def assess_mpesa_sandbox_batch(
         "automatic_finalization_enabled": False,
         "financial_action_authorized": False,
     }
+    report["operator_triage"] = triage_sandbox_review(report)
+    return report
