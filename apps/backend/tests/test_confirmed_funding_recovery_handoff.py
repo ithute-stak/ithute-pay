@@ -24,7 +24,8 @@ def seed(suffix: str, funding_status: str = "succeeded"):
             application_id=app.id, amount=Decimal("10.00"), currency="LSL",
             provider="mpesa", destination_phone="26650000000",
             reference="recovery-" + suffix, status="funding_unknown",
-            metadata_json={"funding_mode": "direct_mpesa", "funding_account_reference": "company"},
+            metadata_json={"funding_mode": "direct_mpesa", "funding_account_reference": "company",
+                           "gateway_fee_amount": "0.10", "funding_debit_amount": "10.10"},
         )
         db.add(payout); db.flush()
         operation = ProviderOperation(
