@@ -15,6 +15,7 @@ from services.provider_operations import apply_operation_result
         ("succeeded", "processing"),
         ("failed", "unknown"),
         ("failed", "processing"),
+        ("failed", "succeeded"),
     ],
 )
 def test_stale_operation_result_preserves_terminal_status(previous, incoming):

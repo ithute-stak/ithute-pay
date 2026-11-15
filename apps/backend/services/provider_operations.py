@@ -25,7 +25,10 @@ def apply_operation_result(db: Session, operation: ProviderOperation, result: Pr
     # Delayed callbacks must never downgrade a terminal provider outcome.
     if operation.status == "succeeded" and result.status != "succeeded":
         return operation
-    if operation.status == "failed" and result.status in {"processing", "unknown"}:
+    # A confirmed provider failure is also terminal. A later contradictory
+    # success must be investigated against independent provider evidence,
+    # not silently turn a failed transfer into funded money.
+    if operation.status == "failed" and result.status != "failed":
         return operation
     operation.status = result.status
     operation.conversation_id = result.conversation_id or operation.conversation_id
