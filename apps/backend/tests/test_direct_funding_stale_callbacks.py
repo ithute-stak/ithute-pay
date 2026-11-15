@@ -80,3 +80,29 @@ def test_unlinked_operation_rejected_before_changes(monkeypatch):
         assert exc.value.status_code == 409
         assert db.get(Payout, payout_id).status == "processing"
         assert db.get(ProviderOperation, operation_id).status == "succeeded"
+
+
+def test_stale_failure_after_confirmed_funding_allows_only_original_handoff(monkeypatch):
+    payout_id, operation_id = seed("late-before-handoff", payout_status="funding_unknown")
+    calls = []
+    monkeypatch.setattr(payments, "_payout_funding_account",
+                        lambda *args, **kwargs: SimpleNamespace(id="isolated"))
+    monkeypatch.setattr(payments, "credit_direct_funding",
+                        lambda *args, **kwargs: calls.append("credit"))
+    monkeypatch.setattr(payments, "book_direct_company_funding",
+                        lambda *args, **kwargs: calls.append("journal"))
+    monkeypatch.setattr(payments, "_payout_transaction",
+                        lambda *args, **kwargs: object())
+    async def handoff(db, payout, tx):
+        calls.append("handoff")
+        payout.status = "processing"
+        db.add(payout); db.commit()
+        return payout
+    monkeypatch.setattr(payments, "_execute_funded_payout", handoff)
+    with SessionLocal() as db:
+        payout = asyncio.run(payments.finalize_direct_funding_operation(
+            db, db.get(ProviderOperation, operation_id),
+            ProviderResult(accepted=False, status="failed", response_code="STALE")
+        ))
+        assert payout.status == "processing"
+    assert calls == ["credit", "journal", "handoff"]
