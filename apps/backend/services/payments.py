@@ -252,18 +252,27 @@ async def _execute_funded_payout(db: Session, payout: Payout, tx: ProviderTransa
         raise HTTPException(status_code=409, detail="LoanHub payout fee must be merchant-paid")
     required = Decimal(payout.amount) + Decimal(fee.amount)
     metadata = dict(payout.metadata_json or {})
-    if payout.status == "funding":
-        # A funding callback must not trigger a payout until its original
-        # provider operation has independently confirmed success.
+    funded_by_mpesa = metadata.get("funding_mode") == "direct_mpesa"
+    if funded_by_mpesa:
+        # Funding completion, payout dispatch and reconciliation are separate
+        # events. A prior funding timeout can be resolved as succeeded later.
+        # That may authorize ONE payout claim, never a new funding transfer.
         funding_id = str(metadata.get("direct_funding_operation_id") or "")
         funding_operation = db.get(ProviderOperation, funding_id) if funding_id else None
-        if not funding_operation or funding_operation.status != "succeeded":
-            raise HTTPException(status_code=409, detail="Direct funding is not confirmed")
-    # Persist a single atomic ownership claim before any payout provider I/O.
-    # Replays of processing, unknown, or completed payouts cannot send twice.
+        if (not funding_operation or funding_operation.status != "succeeded"
+                or funding_operation.resource_type != "payout"
+                or funding_operation.resource_id != payout.id
+                or funding_operation.operation_type != "payout.direct_funding"
+                or funding_operation.merchant_id != payout.merchant_id
+                or funding_operation.application_id != payout.application_id):
+            raise HTTPException(status_code=409, detail="Direct funding is not confirmed for this payout")
+    # A funding_unknown state is eligible ONLY when the original direct
+    # funding has independently succeeded. Previously dispatched payouts
+    # (processing / unknown / succeeded) are never eligible.
+    eligible = ("funding", "funding_unknown") if funded_by_mpesa else ("created",)
     claimed = db.execute(
         update(Payout)
-        .where(Payout.id == payout.id, Payout.status.in_(("created", "funding")))
+        .where(Payout.id == payout.id, Payout.status.in_(eligible))
         .values(status="processing")
         .execution_options(synchronize_session="fetch")
     ).rowcount
