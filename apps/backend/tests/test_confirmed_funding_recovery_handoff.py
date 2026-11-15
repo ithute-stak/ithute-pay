@@ -1,5 +1,6 @@
 """Late funding confirmation can hand off ONE payout, never duplicate funds."""
 import asyncio
+import hashlib
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -40,7 +41,7 @@ def seed(suffix: str, funding_status: str = "succeeded"):
             merchant_id=merchant.id, application_id=app.id,
             resource_type="payout", resource_id=payout.id, provider="mpesa",
             direction="outbound", amount=Decimal("10.00"), currency="LSL",
-            status="created", transaction_reference="RH-" + suffix,
+            status="created", transaction_reference="RH-" + hashlib.sha256(suffix.encode()).hexdigest()[:12],
             third_party_conversation_id="RH-CONV-" + suffix,
         )
         db.add(tx); db.commit()
