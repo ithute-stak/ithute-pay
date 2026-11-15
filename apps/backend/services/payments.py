@@ -304,9 +304,13 @@ async def _start_direct_funding(db: Session, payout: Payout, tx: ProviderTransac
     operation_id = str(metadata.get("direct_funding_operation_id") or "")
     if operation_id:
         operation = db.get(ProviderOperation, operation_id)
-        if operation and operation.status == "succeeded": return await _execute_funded_payout(db,payout,tx)
-        if operation and operation.status in {"processing","unknown"}:
-            payout.status="funding"; db.add(payout); db.commit(); return payout
+        if operation and operation.status == "succeeded":
+            return await _execute_funded_payout(db, payout, tx)
+        # A pending, uncertain, failed or missing operation must not
+        # initiate a fresh funding transfer. Preserve its evidence for review.
+        return payout
+    if payout.status != "created":
+        return payout
 
     fee = calculate_fee_details(db, tx)
     if str(fee.payer or "merchant").lower() != "merchant":
@@ -315,6 +319,18 @@ async def _start_direct_funding(db: Session, payout: Payout, tx: ProviderTransac
     config = direct_funding_configuration(db,payout)
     provider = build_direct_funding_provider(config)
     require_provider_capability(provider,"transfer")
+    # Only one worker may claim this payout and create a funding operation.
+    # The claim and operation are committed before any provider request.
+    claimed = db.execute(
+        update(Payout)
+        .where(Payout.id == payout.id, Payout.status == "created")
+        .values(status="funding")
+        .execution_options(synchronize_session="fetch")
+    ).rowcount
+    if claimed != 1:
+        db.rollback()
+        db.refresh(payout)
+        return payout
     operation = create_operation(
         db, merchant_id=payout.merchant_id, application_id=payout.application_id, provider=payout.provider,
         operation_type="payout.direct_funding", resource_type="payout", resource_id=payout.id,
