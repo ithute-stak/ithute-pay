@@ -18,6 +18,7 @@ def test_conflicting_provider_reference_rejected_before_posting(resource_type, d
     tx = SimpleNamespace(
         resource_type=resource_type, direction=direction, status=state,
         confirmed_at=None, provider_transaction_id="original-provider-id",
+        conversation_id=None, reversed=False,
     )
     incoming = SimpleNamespace(
         status="succeeded", transaction_id="different-provider-id",
@@ -62,6 +63,7 @@ def test_first_provider_reference_can_be_recorded():
     tx = SimpleNamespace(
         resource_type="payout", status="processing",
         confirmed_at=None, provider_transaction_id=None,
+        conversation_id=None, reversed=False,
     )
     incoming = SimpleNamespace(
         status="processing", transaction_id="first-provider-id",
