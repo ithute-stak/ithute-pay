@@ -21,6 +21,7 @@ from services.funding import (
     credit_direct_funding, funding_account, release_payout_reservation, reserve_payout,
 )
 from services.direct_funding_amounts import verified_direct_funding_amount
+from services.direct_funding_provider_identity import require_matching_provider_transaction
 from services.funding_accounting import book_direct_company_funding
 from services.ledger import book_reversal, book_success
 from services.loanhub_funding import (
@@ -396,6 +397,7 @@ async def finalize_direct_funding_operation(db: Session, operation: ProviderOper
             or operation.application_id != payout.application_id
             or operation.provider != payout.provider):
         raise HTTPException(status_code=409, detail="Funding operation does not match payout")
+    require_matching_provider_transaction(operation, result)
     apply_operation_result(db, operation, result)
     # Provider callbacks can arrive after the payout was already dispatched.
     # Never downgrade a completed/uncertain payout or repeat its funding credit.

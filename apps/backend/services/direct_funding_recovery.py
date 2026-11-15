@@ -9,6 +9,7 @@ from integrations.mpesa.contracts import require_provider_capability
 from services.events import publish_event
 from services.funding import credit_direct_funding, funding_account
 from services.direct_funding_amounts import verified_direct_funding_amount
+from services.direct_funding_provider_identity import require_matching_provider_transaction
 from services.funding_accounting import book_direct_company_funding
 from services.loanhub_funding import build_direct_funding_provider, direct_funding_configuration
 from services.payments import execute_payout
@@ -71,6 +72,7 @@ async def reconcile_direct_funding_payout(db: Session, payout: Payout, operation
         if not query_reference:
             return payout
         result = await provider.query(query_reference=query_reference, third_party_conversation_id=conversation_id())
+        require_matching_provider_transaction(operation, result)
         apply_operation_result(db, operation, result)
         db.commit(); db.refresh(operation)
 
