@@ -1,5 +1,6 @@
 """Direct-funded B2C payment must preserve approved principal and fee snapshot."""
 import asyncio
+import hashlib
 from decimal import Decimal
 from types import SimpleNamespace
 
@@ -39,7 +40,7 @@ def seed(suffix: str, *, funded_fee="10.00", funded_total="1010.00"):
             application_id=app.id, merchant_id=merchant.id, provider="mpesa",
             resource_type="payout", resource_id=payout.id, direction="outbound",
             amount=Decimal("1000.00"), currency="LSL", status="created",
-            transaction_reference="SNAP-" + suffix,
+            transaction_reference="SN-" + hashlib.sha256(suffix.encode()).hexdigest()[:12],
             third_party_conversation_id="SNAP-TX-" + suffix,
         )
         db.add(tx); db.commit()
