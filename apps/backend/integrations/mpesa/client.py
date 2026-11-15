@@ -169,6 +169,31 @@ class MpesaClient:
         return text
 
     @staticmethod
+    def _reported_money(payload: dict[str, Any]) -> tuple[Decimal | None, str | None]:
+        """Extract only explicit provider output fields, never request echoes.
+
+        Availability and exact field contracts depend on the approved M-Pesa
+        product. An absent or malformed amount is NOT inferred from input_Amount,
+        configured currency, status or the original requested transfer.
+        The resulting claim is not independent settlement attestation.
+        """
+        raw_amount = payload.get("output_Amount")
+        raw_currency = payload.get("output_Currency")
+        if raw_amount is None or isinstance(raw_amount, bool):
+            return None, None
+        try:
+            value = Decimal(str(raw_amount))
+            if (not value.is_finite() or value <= 0
+                    or value != value.quantize(Decimal("0.01"))):
+                return None, None
+        except (ValueError, TypeError, ArithmeticError):
+            return None, None
+        currency = raw_currency.strip().upper() if isinstance(raw_currency, str) else ""
+        if len(currency) != 3 or not currency.isalpha() or not currency.isascii():
+            return value, None
+        return value, currency
+
+    @staticmethod
     def _to_result(status_code: int, payload: dict[str, Any]) -> ProviderResult:
         code = payload.get("output_ResponseCode") or payload.get("input_ResultCode")
         desc = payload.get("output_ResponseDesc") or payload.get("input_ResultDesc")
@@ -193,6 +218,7 @@ class MpesaClient:
         else:
             status = "failed"
         reversed_value = payload.get("output_Reversed") or payload.get("input_Reversed") or False
+        reported_amount, reported_currency = MpesaClient._reported_money(payload)
         return ProviderResult(
             accepted=accepted,
             status=status,
@@ -204,6 +230,8 @@ class MpesaClient:
             raw=payload,
             reversed=str(reversed_value).lower() == "true" if not isinstance(reversed_value, bool) else reversed_value,
             extra={"http_status": status_code, "transaction_status": transaction_status},
+            reported_amount=reported_amount,
+            reported_currency=reported_currency,
         )
 
     async def collect(self, *, amount: Decimal, currency: str, phone: str, transaction_reference: str,
