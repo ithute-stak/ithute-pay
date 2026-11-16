@@ -133,11 +133,15 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
 
     outcome_ok = _provider_outcome_matches(result.response_description, case.get("expected"))
     deterministic_error = "succeeded" not in expected_statuses and not case.get("expected_extra")
-    # HTTP transport semantics can classify a deterministic sandbox business
-    # fixture as failed or unknown even when the provider returned the exact
-    # documented outcome. Preserve status matching as a diagnostic, but allow
-    # the exact deterministic provider outcome to satisfy the scenario.
-    base_ok = status_ok or (deterministic_error and outcome_ok)
+    # Negative sandbox fixtures test a *specific* provider outcome. Merely
+    # returning any failed/unknown status is not enough (e.g. authentication
+    # failure cannot pass an incorrect-PIN or timeout scenario).
+    # Allow failed/unknown normalization differences only for the exact
+    # documented provider outcome, never for a successful/processing response.
+    if deterministic_error:
+        base_ok = outcome_ok and result.status in {"failed", "unknown"}
+    else:
+        base_ok = status_ok
 
     checks: dict[str, Any] = {
         "status_matches": status_ok,
@@ -146,6 +150,7 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
         ),
         "independent_settlement_verified": False,
         "provider_outcome_matches": outcome_ok,
+        "negative_fixture_specific_outcome_required": deterministic_error,
         "actual_provider_outcome": result.response_description,
         "expected_statuses": expected_statuses,
         "expected_provider_outcome": case.get("expected"),
