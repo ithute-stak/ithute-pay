@@ -139,7 +139,8 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
     # Allow failed/unknown normalization differences only for the exact
     # documented provider outcome, never for a successful/processing response.
     if deterministic_error:
-        base_ok = outcome_ok and result.status in {"failed", "unknown"}
+        base_ok = (bool(str(case.get("expected") or "").strip())
+                   and outcome_ok and result.status in {"failed", "unknown"})
     else:
         base_ok = status_ok
 
