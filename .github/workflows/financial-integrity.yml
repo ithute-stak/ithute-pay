@@ -142,6 +142,9 @@ jobs:
             tests/test_b2c_pass_through_provider_identity.py \
             tests/test_mpesa_certification_readiness.py \
             tests/test_mpesa_sandbox_scenario_review.py \
+            tests/test_mpesa_certification_terminal_success_guard.py \
+            tests/test_mpesa_official_sandbox_certification.py \
+            tests/test_mpesa_certification_outcome_matching_and_b2b.py \
             tests/test_direct_funding_stale_callbacks.py \
             tests/test_b2c_funding_fee_snapshot.py \
             tests/test_recovered_funding_amounts.py \

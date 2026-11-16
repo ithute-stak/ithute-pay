@@ -122,7 +122,7 @@ def test_query_direct_debit_state_and_balance_matrix_is_preserved():
     assert balance["smaller_than_500"]["expected_extra"]["sufficient_balance"] is True
 
 
-def test_success_acceptance_can_be_async_but_state_assertions_still_require_terminal_evidence():
+def test_async_acceptance_is_not_counted_as_completed_provider_payment():
     accepted_async = ProviderResult(
         accepted=True,
         status="processing",
@@ -130,7 +130,7 @@ def test_success_acceptance_can_be_async_but_state_assertions_still_require_term
         response_description="Request processed successfully",
     )
     passed, _ = _case_passed(accepted_async, {"expected_statuses": ["succeeded"], "expected": "Request processed successfully"})
-    assert passed is True
+    assert passed is False
 
     passed, checks = _case_passed(
         accepted_async,
@@ -141,6 +141,8 @@ def test_success_acceptance_can_be_async_but_state_assertions_still_require_term
         },
     )
     assert passed is False
+    assert checks["pending_provider_confirmation"] is True
+    assert checks["independent_settlement_verified"] is False
     assert checks["extra_matches"]["mandate_status"] is False
 
 

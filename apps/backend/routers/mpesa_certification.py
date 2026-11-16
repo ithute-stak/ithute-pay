@@ -127,13 +127,9 @@ def _result_payload(result: ProviderResult) -> dict[str, Any]:
 def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, dict[str, Any]]:
     expected_statuses = list(case.get("expected_statuses") or [])
     status_ok = result.status in expected_statuses
-    if (
-        "succeeded" in expected_statuses
-        and result.accepted
-        and not case.get("expected_extra")
-        and "expected_reversed" not in case
-    ):
-        status_ok = result.status in {"succeeded", "processing"}
+    # An accepted asynchronous request is not a completed C2B/B2C payment.
+    # Preserve the distinction so certification cannot count pending money as
+    # settled, even when the provider returned INS-0.
 
     outcome_ok = _provider_outcome_matches(result.response_description, case.get("expected"))
     deterministic_error = "succeeded" not in expected_statuses and not case.get("expected_extra")
@@ -145,12 +141,19 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
 
     checks: dict[str, Any] = {
         "status_matches": status_ok,
+        "pending_provider_confirmation": (
+            "succeeded" in expected_statuses and result.status == "processing"
+        ),
+        "independent_settlement_verified": False,
         "provider_outcome_matches": outcome_ok,
         "actual_provider_outcome": result.response_description,
         "expected_statuses": expected_statuses,
         "expected_provider_outcome": case.get("expected"),
     }
     passed = base_ok
+    # A business-description match must never bypass expected terminal success.
+    if "succeeded" in expected_statuses and result.status != "succeeded":
+        passed = False
 
     if "expected_reversed" in case:
         reversed_ok = bool(result.reversed) is bool(case["expected_reversed"])
@@ -549,7 +552,9 @@ async def run_suite(
                     "scenario": scenario,
                     "passed": False,
                     "status": "error",
-                    "error": str(getattr(exc, "detail", exc)),
+                    # Raw provider exceptions can contain tokens or customer
+                    # data. Return a generic classification, not exception text.
+                    "error": "Sandbox case execution failed; investigate server-side audit logs",
                     "duration_ms": round((time.perf_counter() - started) * 1000, 2),
                 })
 
@@ -566,6 +571,11 @@ async def run_suite(
         "passed": passed,
         "failed": len(executed) - passed,
         "all_executed_passed": bool(executed) and passed == len(executed),
+        "suite_complete": bool(results) and len(executed) == len(results),
+        "all_cases_passed": bool(results) and passed == len(results),
+        "independent_settlement_verified": False,
+        "provider_certification_confirmed": False,
+        "live_transfer_approved": False,
         "executed_at": utcnow().isoformat(),
         "results": results,
     }
