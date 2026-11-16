@@ -28,6 +28,7 @@ def assess_mpesa_sandbox_certification(
     case_evidence_references: Mapping[str, str],
     independent_statement_reference: str | None,
     reconciliation_review_reference: str | None,
+    scenario_outcomes: Mapping[str, Mapping] | None = None,
 ) -> dict:
     """Summarize external certification dependencies without authorizing money."""
     if not isinstance(approved_product_capabilities, Mapping):
@@ -60,6 +61,13 @@ def assess_mpesa_sandbox_certification(
     if not review_ref:
         blockers.append("missing_reconciliation_review")
 
+    scenario_review = None
+    if scenario_outcomes is not None:
+        from services.mpesa_sandbox_scenario_review import review_mpesa_sandbox_scenarios
+        scenario_review = review_mpesa_sandbox_scenarios(scenarios=scenario_outcomes)
+        if not scenario_review["all_scenarios_reported_passed_with_references"]:
+            blockers.append("sandbox_scenarios_not_all_reported_passed")
+
     return {
         "environment": "sandbox",
         "required_cases": list(REQUIRED_CASES),
@@ -71,6 +79,7 @@ def assess_mpesa_sandbox_certification(
             "reconciliation_review": bool(review_ref),
         },
         "blockers": blockers,
+        "scenario_review": scenario_review,
         "documentation_complete": not blockers,
         "provider_evidence_authenticated": False,
         "independent_settlement_verified": False,
