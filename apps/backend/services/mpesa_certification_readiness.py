@@ -1,0 +1,86 @@
+"""Fail-closed M-PESA sandbox certification readiness assessment.
+
+Provider approvals, authenticated independent settlement records, and
+reconciliation outcomes must be supplied by an external approved process.
+This produces a gap report only; it never enables live payment rails.
+"""
+from __future__ import annotations
+
+from collections.abc import Mapping
+
+REQUIRED_CASES = (
+    "c2b_collection",
+    "b2c_tenant_funding",
+    "b2c_customer_payout",
+    "b2c_fee_reconciliation",
+    "timeout_recovery",
+    "duplicate_callback",
+    "failed_transfer",
+    "reversal",
+)
+
+# A reviewer records references to independently retained documents, not
+# secrets or raw provider responses. Self-declared references are not proof.
+def assess_mpesa_sandbox_certification(
+    *,
+    provider_approval_reference: str | None,
+    approved_product_capabilities: Mapping[str, bool],
+    case_evidence_references: Mapping[str, str],
+    independent_statement_reference: str | None,
+    reconciliation_review_reference: str | None,
+) -> dict:
+    """Summarize external certification dependencies without authorizing money."""
+    if not isinstance(approved_product_capabilities, Mapping):
+        raise ValueError("Product capability evidence must be a mapping")
+    if not isinstance(case_evidence_references, Mapping):
+        raise ValueError("Certification case evidence must be a mapping")
+
+    approval_ref = str(provider_approval_reference or "").strip()
+    statement_ref = str(independent_statement_reference or "").strip()
+    review_ref = str(reconciliation_review_reference or "").strip()
+    required_capabilities = ("collection", "query", "payout", "reversal")
+    missing_capabilities = [
+        name for name in required_capabilities
+        if approved_product_capabilities.get(name) is not True
+    ]
+    missing_cases = [
+        name for name in REQUIRED_CASES
+        if not isinstance(case_evidence_references.get(name), str)
+        or not case_evidence_references[name].strip()
+    ]
+    blockers = []
+    if not approval_ref:
+        blockers.append("missing_provider_product_approval")
+    if missing_capabilities:
+        blockers.append("missing_approved_product_capabilities")
+    if missing_cases:
+        blockers.append("missing_sandbox_case_evidence")
+    if not statement_ref:
+        blockers.append("missing_independent_provider_statement")
+    if not review_ref:
+        blockers.append("missing_reconciliation_review")
+
+    return {
+        "environment": "sandbox",
+        "required_cases": list(REQUIRED_CASES),
+        "missing_cases": missing_cases,
+        "missing_capabilities": missing_capabilities,
+        "evidence_references_present": {
+            "provider_approval": bool(approval_ref),
+            "independent_statement": bool(statement_ref),
+            "reconciliation_review": bool(review_ref),
+        },
+        "blockers": blockers,
+        "documentation_complete": not blockers,
+        "provider_evidence_authenticated": False,
+        "independent_settlement_verified": False,
+        "provider_certification_confirmed": False,
+        "live_transfer_approved": False,
+        "financial_action_authorized": False,
+        "read_only": True,
+        "next_action": (
+            "Obtain provider-approved sandbox product access and complete missing evidence"
+            if blockers else
+            "Independently authenticate every submitted reference with M-PESA and obtain formal authorization"
+        ),
+    }
