@@ -139,6 +139,7 @@ jobs:
             tests/test_confirmed_funding_recovery_handoff.py \
             tests/test_b2c_pass_through_ledger_evidence.py \
             tests/test_b2c_pass_through_evidence.py \
+            tests/test_b2c_pass_through_provider_identity.py \
             tests/test_direct_funding_stale_callbacks.py \
             tests/test_b2c_funding_fee_snapshot.py \
             tests/test_recovered_funding_amounts.py \
