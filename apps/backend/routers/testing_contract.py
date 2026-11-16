@@ -136,7 +136,8 @@ async def live_connection(db: Session = Depends(get_db), _: User = Depends(platf
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
         }
     except MpesaError as exc:
-        payload = exc.payload or {}
+        # Upstream messages and payloads may contain provider credentials,
+        # session keys or identifying information. Do not echo them to UI.
         return {
             "ok": False,
             "provider": "mpesa",
@@ -145,22 +146,23 @@ async def live_connection(db: Session = Depends(get_db), _: User = Depends(platf
             "market": config.market,
             "endpoint": target,
             "session_obtained": False,
+            "failure_stage": "provider_session_request",
             "http_status": exc.status_code,
-            "response_code": payload.get("output_ResponseCode") or payload.get("input_ResultCode"),
-            "response_description": payload.get("output_ResponseDesc") or payload.get("input_ResultDesc") or str(exc),
-            "provider_response": payload,
+            "response_description": "M-Pesa sandbox session request failed. Verify configured credentials and consult restricted server diagnostics.",
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
         }
     except Exception as exc:
-        error_type = type(exc).__name__
-        if error_type == "InvalidToken":
+        if type(exc).__name__ == "InvalidToken":
             description = (
-                "Stored M-Pesa API key cannot be decrypted with the current "
-                "DATA_ENCRYPTION_KEY/SECRET_KEY. Re-enter the API key on Providers and save it again."
+                "Stored M-Pesa API key cannot be decrypted. "
+                "Re-enter the API key securely on Providers."
             )
             stage = "credential_decryption"
         else:
-            description = f"{error_type}: {exc}"
+            description = (
+                "M-Pesa sandbox session could not be established. "
+                "Verify configuration and consult restricted server diagnostics."
+            )
             stage = "local_configuration_or_transport"
         return {
             "ok": False,
@@ -171,7 +173,6 @@ async def live_connection(db: Session = Depends(get_db), _: User = Depends(platf
             "endpoint": target,
             "session_obtained": False,
             "failure_stage": stage,
-            "error_type": error_type,
             "response_description": description,
             "duration_ms": round((time.perf_counter() - started) * 1000, 2),
         }
