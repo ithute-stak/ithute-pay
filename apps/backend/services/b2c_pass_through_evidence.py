@@ -27,6 +27,17 @@ def _money(value: object, *, strictly_positive: bool) -> Decimal | None:
         return None
 
 
+def _reference_check(expected: str | None, reported: str | None) -> str:
+    """Compare immutable provider identities without trusting either alone."""
+    expected_id = str(expected or "").strip()
+    reported_id = str(reported or "").strip()
+    if not expected_id:
+        return "missing_recorded_provider_reference"
+    if not reported_id:
+        return "missing_reported_provider_reference"
+    return "matches_unverified" if expected_id == reported_id else "provider_reference_conflict"
+
+
 def assess_b2c_pass_through_evidence(
     *, principal_amount: Decimal,
     gateway_fee_amount: Decimal,
@@ -34,6 +45,8 @@ def assess_b2c_pass_through_evidence(
     currency: str,
     tenant_funding_result: ProviderResult,
     customer_payout_result: ProviderResult,
+    expected_funding_provider_transaction_id: str | None = None,
+    expected_payout_provider_transaction_id: str | None = None,
 ) -> dict:
     """Flag mismatches across all three legs without changing payment state."""
     principal = _money(principal_amount, strictly_positive=True)
@@ -73,6 +86,32 @@ def assess_b2c_pass_through_evidence(
             findings.append("tenant_funding_" + funding["comparison"])
         if payout["comparison"] != "reported_match_unverified":
             findings.append("customer_payout_" + payout["comparison"])
+    funding_identity = _reference_check(
+        expected_funding_provider_transaction_id,
+        tenant_funding_result.transaction_id,
+    )
+    payout_identity = _reference_check(
+        expected_payout_provider_transaction_id,
+        customer_payout_result.transaction_id,
+    )
+    if funding_identity != "matches_unverified":
+        findings.append("tenant_funding_" + funding_identity)
+    if payout_identity != "matches_unverified":
+        findings.append("customer_payout_" + payout_identity)
+
+    recorded_funding_id = str(expected_funding_provider_transaction_id or "").strip()
+    recorded_payout_id = str(expected_payout_provider_transaction_id or "").strip()
+    reported_funding_id = str(tenant_funding_result.transaction_id or "").strip()
+    reported_payout_id = str(customer_payout_result.transaction_id or "").strip()
+    duplicate_identity = (
+        bool(recorded_funding_id and recorded_payout_id
+             and recorded_funding_id == recorded_payout_id)
+        or bool(reported_funding_id and reported_payout_id
+                and reported_funding_id == reported_payout_id)
+    )
+    if duplicate_identity:
+        findings.append("funding_and_payout_provider_reference_reused")
+
     # Even matching provider claims do not certify that the tenant was debited
     # or the customer paid. This is a diagnostic review, never authorization.
     findings.append("independent_provider_settlement_attestation_required")
@@ -84,6 +123,9 @@ def assess_b2c_pass_through_evidence(
         "checks": checks,
         "tenant_funding_comparison": funding["comparison"] if funding else None,
         "customer_payout_comparison": payout["comparison"] if payout else None,
+        "tenant_funding_identity_comparison": funding_identity,
+        "customer_payout_identity_comparison": payout_identity,
+        "duplicate_provider_reference_detected": duplicate_identity,
         "review_findings": findings,
         "manual_review_required": True,
         "read_only": True,

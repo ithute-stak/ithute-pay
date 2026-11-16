@@ -1,5 +1,6 @@
 """Three-leg pass-through checks never claim real provider settlement."""
 from decimal import Decimal
+from dataclasses import replace
 
 import pytest
 
@@ -23,8 +24,12 @@ def assess(*, principal="1000.00", fee="10.00", funding="1010.00",
         gateway_fee_amount=Decimal(fee),
         expected_funding_amount=Decimal(funding),
         currency=currency,
-        tenant_funding_result=funding_result or provider("1010.00"),
-        customer_payout_result=payout_result or provider("1000.00"),
+        tenant_funding_result=replace(
+            funding_result or provider("1010.00"), transaction_id="test-funding-ref"),
+        customer_payout_result=replace(
+            payout_result or provider("1000.00"), transaction_id="test-payout-ref"),
+        expected_funding_provider_transaction_id="test-funding-ref",
+        expected_payout_provider_transaction_id="test-payout-ref",
     )
 
 
