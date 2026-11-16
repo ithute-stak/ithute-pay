@@ -507,18 +507,31 @@ async def run_suite(
     user: User = Depends(platform_admin),
 ):
     config, provider = _configured_provider(db)
-    selected = payload.products or list(MPESA_OFFICIAL_SANDBOX_MATRIX)
+    selected = payload.products if payload.products is not None else list(MPESA_OFFICIAL_SANDBOX_MATRIX)
     unknown = [product for product in selected if product not in MPESA_OFFICIAL_SANDBOX_MATRIX]
     if unknown:
         raise HTTPException(status_code=422, detail={"unknown_products": unknown})
+    if not selected or len(set(selected)) != len(selected):
+        raise HTTPException(status_code=422, detail="Select at least one distinct certification product")
 
+    full_matrix_selected = set(selected) == set(MPESA_OFFICIAL_SANDBOX_MATRIX)
+    expected_case_count = sum(
+        len(MPESA_OFFICIAL_SANDBOX_MATRIX[product]["cases"]) for product in selected
+    )
     results: list[dict[str, Any]] = []
     for product in selected:
         product_spec = MPESA_OFFICIAL_SANDBOX_MATRIX[product]
         try:
             _require_capability(config, product_spec)
         except HTTPException as exc:
-            results.append({"product": product, "passed": False, "skipped": True, "reason": exc.detail})
+            for scenario in product_spec["cases"]:
+                results.append({
+                    "product": product,
+                    "scenario": scenario,
+                    "passed": False,
+                    "skipped": True,
+                    "reason": exc.detail,
+                })
             continue
         for scenario in product_spec["cases"]:
             if product == "update_transaction" and not payload.voucher_code:
@@ -566,13 +579,20 @@ async def run_suite(
         "provider": "mpesa",
         "environment": "sandbox",
         "total": len(results),
+        "selected_products": selected,
+        "full_matrix_selected": full_matrix_selected,
+        "expected_case_count": expected_case_count,
         "executed": len(executed),
         "skipped": len(results) - len(executed),
         "passed": passed,
         "failed": len(executed) - passed,
         "all_executed_passed": bool(executed) and passed == len(executed),
-        "suite_complete": bool(results) and len(executed) == len(results),
-        "all_cases_passed": bool(results) and passed == len(results),
+        "suite_complete": bool(results) and len(results) == expected_case_count and len(executed) == expected_case_count,
+        "all_cases_passed": bool(results) and passed == expected_case_count and len(results) == expected_case_count,
+        "full_certification_matrix_reported_passed": (
+            full_matrix_selected and bool(results) and passed == expected_case_count
+            and len(results) == expected_case_count
+        ),
         "independent_settlement_verified": False,
         "provider_certification_confirmed": False,
         "live_transfer_approved": False,
