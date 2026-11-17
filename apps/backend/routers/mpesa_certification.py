@@ -495,7 +495,23 @@ async def run_case(
     config, provider = _configured_provider(db)
     _require_capability(config, product_spec)
     started = time.perf_counter()
-    result = await _execute_case(provider, payload.product, payload.scenario, payload)
+    try:
+        result = await _execute_case(provider, payload.product, payload.scenario, payload)
+    except Exception:
+        # Never propagate provider payloads or exception text from a failed
+        # certification call. Upstream errors may include credentials, tokens,
+        # or customer data. No provider settlement is inferred from this error.
+        raise HTTPException(
+            status_code=502,
+            detail={
+                "message": "M-Pesa sandbox certification case failed to execute",
+                "product": payload.product,
+                "scenario": payload.scenario,
+                "provider_certification_confirmed": False,
+                "independent_settlement_verified": False,
+                "financial_action_authorized": False,
+            },
+        ) from None
     result["duration_ms"] = round((time.perf_counter() - started) * 1000, 2)
     result["executed_at"] = utcnow().isoformat()
     result["environment"] = "sandbox"

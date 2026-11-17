@@ -144,6 +144,7 @@ jobs:
             tests/test_mpesa_sandbox_scenario_review.py \
             tests/test_mpesa_certification_terminal_success_guard.py \
             tests/test_mpesa_certification_success_consistency.py \
+            tests/test_mpesa_certification_single_case_error_safety.py \
             tests/test_mpesa_certification_negative_scenario_guard.py \
             tests/test_mpesa_certification_suite_coverage.py \
             tests/test_mpesa_sandbox_connection_error_redaction.py \
