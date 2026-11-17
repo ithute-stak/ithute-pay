@@ -157,9 +157,25 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
         "expected_provider_outcome": case.get("expected"),
     }
     passed = base_ok
-    # A business-description match must never bypass expected terminal success.
-    if "succeeded" in expected_statuses and result.status != "succeeded":
-        passed = False
+    # Terminal success also requires a provider-accepted response, and for
+    # straightforward success fixtures the exact expected provider outcome.
+    # Extra-state scenarios retain their separately asserted extra checks.
+    requires_terminal_success = "succeeded" in expected_statuses
+    accepted_ok = result.accepted is True
+    successful_outcome_ok = (
+        outcome_ok if not case.get("expected_extra") else True
+    )
+    if requires_terminal_success:
+        passed = (
+            passed and result.status == "succeeded"
+            and accepted_ok and successful_outcome_ok
+        )
+    checks["accepted_matches_terminal_success"] = (
+        accepted_ok if requires_terminal_success else None
+    )
+    checks["success_provider_outcome_required"] = (
+        requires_terminal_success and not bool(case.get("expected_extra"))
+    )
 
     if "expected_reversed" in case:
         reversed_ok = bool(result.reversed) is bool(case["expected_reversed"])
