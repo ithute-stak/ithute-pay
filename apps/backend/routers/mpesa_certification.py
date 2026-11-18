@@ -27,6 +27,7 @@ from services.mpesa_certification_evidence import (
     safe_mpesa_certification_response,
     safe_mpesa_certification_description,
     safe_mpesa_certification_extra,
+    safe_mpesa_certification_scalar,
 )
 from services.audit import write_audit
 from services.events import json_safe
@@ -117,14 +118,14 @@ def _provider_outcome_matches(actual: Any, expected: Any) -> bool:
 
 def _result_payload(result: ProviderResult) -> dict[str, Any]:
     return {
-        "accepted": result.accepted,
-        "status": result.status,
-        "response_code": result.response_code,
+        "accepted": result.accepted is True,
+        "status": result.status if result.status in {"created", "processing", "succeeded", "failed", "unknown"} else "unknown",
+        "response_code": safe_mpesa_certification_scalar("output_ResponseCode", result.response_code),
         "response_description": safe_mpesa_certification_description(result.response_description),
-        "conversation_id": result.conversation_id,
-        "transaction_id": result.transaction_id,
-        "third_party_conversation_id": result.third_party_conversation_id,
-        "reversed": result.reversed,
+        "conversation_id": safe_mpesa_certification_scalar("output_ConversationID", result.conversation_id),
+        "transaction_id": safe_mpesa_certification_scalar("output_TransactionID", result.transaction_id),
+        "third_party_conversation_id": safe_mpesa_certification_scalar("output_ThirdPartyConversationID", result.third_party_conversation_id),
+        "reversed": safe_mpesa_certification_scalar("output_Reversed", result.reversed),
         "extra": safe_mpesa_certification_extra(result.extra),
         "provider_response": safe_mpesa_certification_response(result.raw),
         "provider_response_redacted": True,
