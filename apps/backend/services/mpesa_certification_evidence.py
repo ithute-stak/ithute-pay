@@ -29,8 +29,8 @@ REDACTED = "[REDACTED]"
 
 # Provider-supplied values may be hostile even when stored under documented
 # keys. Validate each field's format rather than merely limiting its length.
-_SAFE_CODE = re.compile(r"[A-Za-z0-9_-]{1,32}\\Z", re.ASCII)
-_SAFE_REFERENCE = re.compile(r"[A-Za-z0-9_.:-]{1,128}\\Z", re.ASCII)
+_SAFE_CODE = re.compile(r"[A-Za-z0-9_-]{1,32}\Z", re.ASCII)
+_SAFE_REFERENCE = re.compile(r"[A-Za-z0-9_.:-]{1,128}\Z", re.ASCII)
 _REFERENCE_FIELDS = frozenset({
     "output_ConversationID", "output_TransactionID",
     "output_ThirdPartyConversationID", "output_TransactionReference",
