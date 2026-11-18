@@ -25,6 +25,8 @@ from routers import testing as legacy_testing
 from services.mpesa_certification_evidence import (
     safe_mpesa_certification_request,
     safe_mpesa_certification_response,
+    safe_mpesa_certification_description,
+    safe_mpesa_certification_extra,
 )
 from services.audit import write_audit
 from services.events import json_safe
@@ -118,12 +120,12 @@ def _result_payload(result: ProviderResult) -> dict[str, Any]:
         "accepted": result.accepted,
         "status": result.status,
         "response_code": result.response_code,
-        "response_description": result.response_description,
+        "response_description": safe_mpesa_certification_description(result.response_description),
         "conversation_id": result.conversation_id,
         "transaction_id": result.transaction_id,
         "third_party_conversation_id": result.third_party_conversation_id,
         "reversed": result.reversed,
-        "extra": json_safe(result.extra),
+        "extra": safe_mpesa_certification_extra(result.extra),
         "provider_response": safe_mpesa_certification_response(result.raw),
         "provider_response_redacted": True,
     }
@@ -157,7 +159,7 @@ def _case_passed(result: ProviderResult, case: dict[str, Any]) -> tuple[bool, di
         "independent_settlement_verified": False,
         "provider_outcome_matches": outcome_ok,
         "negative_fixture_specific_outcome_required": deterministic_error,
-        "actual_provider_outcome": result.response_description,
+        "actual_provider_outcome": safe_mpesa_certification_description(result.response_description),
         "expected_statuses": expected_statuses,
         "expected_provider_outcome": case.get("expected"),
     }
