@@ -8,6 +8,7 @@ responses server-side through the existing restricted logging mechanism.
 from __future__ import annotations
 
 from collections.abc import Mapping
+import re
 from typing import Any
 
 from services.events import json_safe
@@ -26,6 +27,30 @@ SAFE_PROVIDER_FIELDS = frozenset({
 })
 
 REDACTED = "[REDACTED]"
+
+# Provider-supplied values may be hostile even when stored under documented
+# keys. Validate each field's format rather than merely limiting its length.
+_SAFE_CODE = re.compile(r"[A-Za-z0-9_-]{1,32}\\Z", re.ASCII)
+_SAFE_REFERENCE = re.compile(r"[A-Za-z0-9_.:-]{1,128}\\Z", re.ASCII)
+_REFERENCE_FIELDS = frozenset({
+    "output_ConversationID", "output_TransactionID",
+    "output_ThirdPartyConversationID", "output_TransactionReference",
+})
+
+
+def safe_mpesa_certification_scalar(key: str, value: Any) -> str | bool | None:
+    """Fail closed on untrusted provider fields included in evidence exports."""
+    if key == "output_Reversed":
+        if type(value) is bool:
+            return value
+        if isinstance(value, str) and value.lower() in {"true", "false"}:
+            return value.lower() == "true"
+        return None
+    if key == "output_ResponseCode":
+        return value if isinstance(value, str) and _SAFE_CODE.fullmatch(value) else None
+    if key in _REFERENCE_FIELDS:
+        return value if isinstance(value, str) and _SAFE_REFERENCE.fullmatch(value) else None
+    return None
 
 
 # Only provider response descriptions known to the documented sandbox matrix
@@ -91,7 +116,9 @@ def safe_mpesa_certification_response(raw: Any) -> dict[str, Any]:
             if description is not None:
                 result[key] = description
         else:
-            result[key] = json_safe(value) if not isinstance(value, str) else value[:300]
+            safe_value = safe_mpesa_certification_scalar(key, value)
+            if safe_value is not None:
+                result[key] = safe_value
     return result
 
 
