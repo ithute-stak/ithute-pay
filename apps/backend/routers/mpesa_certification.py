@@ -119,7 +119,7 @@ def _provider_outcome_matches(actual: Any, expected: Any) -> bool:
 def _result_payload(result: ProviderResult) -> dict[str, Any]:
     return {
         "accepted": result.accepted is True,
-        "status": result.status if result.status in {"created", "processing", "succeeded", "failed", "unknown"} else "unknown",
+        "status": result.status if isinstance(result.status, str) and result.status in {"created", "processing", "succeeded", "failed", "unknown"} else "unknown",
         "response_code": safe_mpesa_certification_scalar("output_ResponseCode", result.response_code),
         "response_description": safe_mpesa_certification_description(result.response_description),
         "conversation_id": safe_mpesa_certification_scalar("output_ConversationID", result.conversation_id),
