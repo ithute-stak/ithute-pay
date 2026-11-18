@@ -11,7 +11,6 @@ from collections.abc import Mapping
 import re
 from typing import Any
 
-from services.events import json_safe
 from integrations.mpesa.sandbox_matrix import MPESA_OFFICIAL_SANDBOX_MATRIX
 
 # Explicit allowlist: never expose unknown upstream fields or nested objects.
