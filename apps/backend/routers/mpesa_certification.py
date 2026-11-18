@@ -22,6 +22,10 @@ from integrations.mpesa.sandbox_matrix import (
 )
 from providers.mpesa.factory import build_gateway_provider
 from routers import testing as legacy_testing
+from services.mpesa_certification_evidence import (
+    safe_mpesa_certification_request,
+    safe_mpesa_certification_response,
+)
 from services.audit import write_audit
 from services.events import json_safe
 from utils.helpers import public_id, utcnow
@@ -120,7 +124,8 @@ def _result_payload(result: ProviderResult) -> dict[str, Any]:
         "third_party_conversation_id": result.third_party_conversation_id,
         "reversed": result.reversed,
         "extra": json_safe(result.extra),
-        "provider_response": json_safe(result.raw),
+        "provider_response": safe_mpesa_certification_response(result.raw),
+        "provider_response_redacted": True,
     }
 
 
@@ -450,7 +455,7 @@ async def _execute_case(provider, product: str, scenario: str, req: MpesaCertifi
         "trigger_value": value,
         "passed": passed,
         "checks": checks,
-        "request_evidence": request_evidence,
+        "request_evidence": safe_mpesa_certification_request(request_evidence),
         "result": _result_payload(result),
     }
 
