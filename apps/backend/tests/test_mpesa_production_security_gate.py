@@ -121,3 +121,24 @@ def test_unapproved_live_mpesa_is_not_advertised_in_public_catalog(
         db.commit()
         assert not any(m["provider"] == "mpesa" for m in payment_method_catalog(db, "LSL")["methods"])
         assert not any(m["provider"] == "mpesa" for m in payout_provider_catalog(db, "LSL")["providers"])
+
+
+def test_provider_registry_rejects_live_database_gateway_when_disabled(
+    production_settings
+):
+    """A DB-active provider cannot bypass the independent production gate."""
+    from database.models import GatewayProviderConfiguration
+    from database.session import SessionLocal
+    from integrations.registry import get_provider
+
+    with SessionLocal() as db:
+        db.add(GatewayProviderConfiguration(
+            provider="mpesa", environment="production", mode="live",
+            enabled=True, active=True, country="LES", currency="LSL",
+            base_url="https://example.invalid",
+            metadata_json={},
+        ))
+        db.commit()
+        with pytest.raises(HTTPException) as exc:
+            get_provider("mpesa", db=db)
+        assert exc.value.status_code == 503
