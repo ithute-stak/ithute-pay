@@ -67,3 +67,38 @@ def test_production_callback_rejects_missing_or_bad_token(production_settings, m
 def test_production_callback_accepts_correct_token(production_settings, monkeypatch):
     monkeypatch.setattr(settings, "PROVIDER_CALLBACK_TOKEN", "expected-test-token")
     require_mpesa_callback_auth("expected-test-token")
+
+
+def test_callback_endpoint_without_production_auth_cannot_write_log(
+    client, production_settings
+):
+    from sqlalchemy import select
+    from database.models import ProviderCallbackLog
+    from database.session import SessionLocal
+
+    response = client.post(
+        "/api/v1/provider-callbacks/mpesa/result",
+        json={
+            "input_ThirdPartyConversationID": "unauthorized-callback",
+            "input_ResultCode": "INS-0",
+        },
+    )
+    assert response.status_code == 503
+    with SessionLocal() as db:
+        assert db.scalars(select(ProviderCallbackLog)).first() is None
+
+
+def test_timeout_endpoint_without_production_auth_cannot_write_log(
+    client, production_settings
+):
+    from sqlalchemy import select
+    from database.models import ProviderCallbackLog
+    from database.session import SessionLocal
+
+    response = client.post(
+        "/api/v1/provider-callbacks/mpesa/timeout",
+        json={"input_ThirdPartyConversationID": "unauthorized-timeout"},
+    )
+    assert response.status_code == 503
+    with SessionLocal() as db:
+        assert db.scalars(select(ProviderCallbackLog)).first() is None
