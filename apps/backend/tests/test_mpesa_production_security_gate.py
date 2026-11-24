@@ -102,3 +102,22 @@ def test_timeout_endpoint_without_production_auth_cannot_write_log(
     assert response.status_code == 503
     with SessionLocal() as db:
         assert db.scalars(select(ProviderCallbackLog)).first() is None
+
+
+def test_unapproved_live_mpesa_is_not_advertised_in_public_catalog(
+    production_settings
+):
+    from database.models import GatewayProviderConfiguration
+    from database.session import SessionLocal
+    from services.payment_methods import payment_method_catalog, payout_provider_catalog
+
+    with SessionLocal() as db:
+        db.add(GatewayProviderConfiguration(
+            provider="mpesa", environment="production", mode="live",
+            enabled=True, active=True, country="LES", currency="LSL",
+            base_url="https://example.invalid",
+            metadata_json={"capabilities": {"payout": True}},
+        ))
+        db.commit()
+        assert not any(m["provider"] == "mpesa" for m in payment_method_catalog(db, "LSL")["methods"])
+        assert not any(m["provider"] == "mpesa" for m in payout_provider_catalog(db, "LSL")["providers"])
