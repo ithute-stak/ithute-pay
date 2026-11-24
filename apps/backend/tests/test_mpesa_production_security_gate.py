@@ -142,3 +142,49 @@ def test_provider_registry_rejects_live_database_gateway_when_disabled(
         with pytest.raises(HTTPException) as exc:
             get_provider("mpesa", db=db)
         assert exc.value.status_code == 503
+
+
+@pytest.mark.parametrize("suffix", ["/mpesa", "/mpesa/callback", "/mpesa/result", "/mpesa/timeout"])
+def test_all_production_callback_routes_reject_wrong_token_without_db_write(
+    client, production_settings, monkeypatch, suffix
+):
+    from sqlalchemy import select
+    from database.models import ProviderCallbackLog
+    from database.session import SessionLocal
+
+    monkeypatch.setattr(settings, "PROVIDER_CALLBACK_TOKEN", "expected-test-token")
+    response = client.post(
+        "/api/v1/provider-callbacks" + suffix,
+        headers={"X-Provider-Callback-Token": "incorrect-test-token"},
+        json={
+            "input_ThirdPartyConversationID": "unauthenticated-financial-callback",
+            "input_ResultCode": "INS-0",
+        },
+    )
+    assert response.status_code == 401
+    with SessionLocal() as db:
+        assert db.scalars(select(ProviderCallbackLog)).first() is None
+
+
+def test_authenticated_unmatched_callback_is_logged_without_crediting_funds(
+    client, production_settings, monkeypatch
+):
+    from sqlalchemy import select
+    from database.models import ProviderCallbackLog, ProviderTransaction
+    from database.session import SessionLocal
+
+    monkeypatch.setattr(settings, "PROVIDER_CALLBACK_TOKEN", "expected-test-token")
+    response = client.post(
+        "/api/v1/provider-callbacks/mpesa/result",
+        headers={"X-Provider-Callback-Token": "expected-test-token"},
+        json={
+            "input_ThirdPartyConversationID": "unmatched-synthetic-callback",
+            "input_ResultCode": "INS-0",
+        },
+    )
+    assert response.status_code == 200
+    with SessionLocal() as db:
+        callback = db.scalars(select(ProviderCallbackLog)).first()
+        assert callback is not None
+        assert callback.processing_status == "unmatched"
+        assert db.scalars(select(ProviderTransaction)).first() is None
