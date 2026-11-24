@@ -42,6 +42,14 @@ def payment_method_catalog(db: Session, currency: str) -> dict:
     requested_currency = currency.strip().upper()
     methods: list[dict] = []
     for row in _active_rows(db):
+        if (
+            settings.is_production
+            and row.provider.strip().lower() == "mpesa"
+            and row.environment.strip().lower() == "production"
+            and row.mode.strip().lower() == "live"
+            and not settings.MPESA_LIVE_DISPATCH_ENABLED
+        ):
+            continue
         if requested_currency not in _supported_currencies(row): continue
         provider = row.provider.strip().lower()
         metadata = row.metadata_json or {}
@@ -53,7 +61,7 @@ def payment_method_catalog(db: Session, currency: str) -> dict:
             methods.append({"id":"paypal","provider":"paypal","label":"PayPal","description":"Continue in the PayPal-hosted secure checkout.","payment_method":"paypal","flow":"hosted_checkout","available":True,"environment":row.environment,"fields":[]})
             if bool(metadata.get("card_enabled", False)):
                 methods.append({"id":"card","provider":"paypal","label":"Debit or credit card","description":"Card details are entered only in PayPal-hosted secure fields.","payment_method":"card","flow":"hosted_checkout","available":True,"environment":row.environment,"fields":[]})
-    if requested_currency == settings.MPESA_CURRENCY.upper() and settings.MPESA_MODE == "simulator" and not any(m["flow"] == "phone_prompt" for m in methods):
+    if (not settings.is_production or settings.MPESA_LIVE_DISPATCH_ENABLED) and requested_currency == settings.MPESA_CURRENCY.upper() and settings.MPESA_MODE == "simulator" and not any(m["flow"] == "phone_prompt" for m in methods):
         mobile = _MOBILE_METHODS["mpesa"]
         methods.insert(0,{"id":"mpesa","provider":"mpesa","label":mobile["label"],"description":mobile["description"],"payment_method":"mobile_money","flow":"phone_prompt","available":True,"environment":"sandbox","fields":[{"key":"phone","type":"tel","label":mobile["field_label"],"placeholder":mobile["placeholder"],"required":True,"autocomplete":"tel"}]})
     return {"currency": requested_currency, "methods": methods}
@@ -63,6 +71,14 @@ def payout_provider_catalog(db: Session, currency: str) -> dict:
     requested_currency = currency.strip().upper()
     providers = []
     for row in _active_rows(db):
+        if (
+            settings.is_production
+            and row.provider.strip().lower() == "mpesa"
+            and row.environment.strip().lower() == "production"
+            and row.mode.strip().lower() == "live"
+            and not settings.MPESA_LIVE_DISPATCH_ENABLED
+        ):
+            continue
         if requested_currency not in _supported_currencies(row) or not _payout_capable(row): continue
         provider = row.provider.strip().lower(); mobile = _MOBILE_METHODS.get(provider)
         if mobile:

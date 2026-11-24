@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     DEFAULT_COUNTRY: str = 'LES'
 
     MPESA_ENABLED: bool = False
+    # Explicit production authorization independent of database gateway activation.
+    # Keep disabled until direct M-Pesa operational approval is verified.
+    MPESA_LIVE_DISPATCH_ENABLED: bool = False
     MPESA_MODE: str = 'simulator'
     MPESA_ENVIRONMENT: str = 'sandbox'
     MPESA_HOST: str = 'https://openapi.m-pesa.com'

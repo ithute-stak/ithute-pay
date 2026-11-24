@@ -12,7 +12,26 @@ def _guard(client: MpesaClient, metadata: dict | None = None):
     return CapabilityGuardedMpesaProvider(client, (metadata or {}).get("capabilities"))
 
 
+def _require_live_mpesa_dispatch(*, environment: str, mode: str) -> None:
+    """Fail closed for production M-Pesa live client construction.
+
+    This independent switch is intentionally separate from MPESA_ENABLED,
+    because database-managed gateways do not use the default provider path.
+    Do not set it true until direct M-Pesa traffic and callback protections
+    have been independently approved.
+    """
+    if (
+        settings.is_production
+        and str(environment).lower() == "production"
+        and str(mode).lower() == "live"
+        and not settings.MPESA_LIVE_DISPATCH_ENABLED
+    ):
+        from fastapi import HTTPException
+        raise HTTPException(status_code=503, detail="Production M-Pesa live dispatch is not authorized")
+
+
 def _gateway_client(config, *, service_provider_code: str | None = None, cache_suffix: str | None = None):
+    _require_live_mpesa_dispatch(environment=config.environment, mode=config.mode)
     shortcode = str(service_provider_code or config.service_provider_code or "").strip()
     namespace = f"gateway:{config.id}"
     if cache_suffix:
@@ -55,6 +74,7 @@ def build_gateway_provider_for_shortcode(config, shortcode: str):
 
 
 def build_application_provider(config, *, application_id: str | None = None):
+    _require_live_mpesa_dispatch(environment=config.environment, mode=config.mode)
     api_key = decrypt_local_secret(config.api_key_ciphertext) if config.api_key_ciphertext else ""
     client = HardenedMpesaClient(MpesaRuntimeConfig(
         environment=config.environment,
@@ -71,6 +91,7 @@ def build_application_provider(config, *, application_id: str | None = None):
 
 
 def build_default_provider():
+    _require_live_mpesa_dispatch(environment=settings.MPESA_ENVIRONMENT, mode=settings.MPESA_MODE)
     if settings.MPESA_MODE == "simulator" or not settings.MPESA_ENABLED:
         return None
     return _guard(HardenedMpesaClient())

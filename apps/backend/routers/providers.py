@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import hmac
 import json
 from urllib.parse import urlencode
 
@@ -30,6 +31,21 @@ from services.provider_operations import apply_operation_result
 from services.settlements import finalize_settlement_result
 
 router = APIRouter(prefix="/provider-callbacks", tags=["Provider Callbacks"])
+
+
+def require_mpesa_callback_auth(supplied_token: str | None) -> None:
+    """Fail closed for live callback handling until provider authentication is configured.
+
+    Provider callback delivery must be tested with the actual Vodacom flow
+    before enabling this in production; never rely on CORS or trusted hosts.
+    """
+    expected = settings.PROVIDER_CALLBACK_TOKEN
+    if settings.is_production and not expected:
+        raise HTTPException(status_code=503, detail="M-Pesa callback authentication is not configured")
+    if expected and not hmac.compare_digest(
+        str(supplied_token or "").encode(), str(expected).encode()
+    ):
+        raise HTTPException(status_code=401, detail="Invalid callback token")
 
 
 def _result(payload: dict, fallback_third: str) -> ProviderResult:
@@ -247,8 +263,7 @@ async def _process_mpesa_result(
     callback_type: str,
     x_provider_callback_token: str | None,
 ):
-    if settings.PROVIDER_CALLBACK_TOKEN and x_provider_callback_token != settings.PROVIDER_CALLBACK_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid callback token")
+    require_mpesa_callback_auth(x_provider_callback_token)
 
     payload = await _json_payload(request)
     third = payload.get("input_ThirdPartyConversationID") or payload.get("output_ThirdPartyConversationID")
@@ -348,8 +363,7 @@ async def mpesa_timeout(
     db: Session = Depends(get_db),
     x_provider_callback_token: str | None = Header(default=None),
 ):
-    if settings.PROVIDER_CALLBACK_TOKEN and x_provider_callback_token != settings.PROVIDER_CALLBACK_TOKEN:
-        raise HTTPException(status_code=401, detail="Invalid callback token")
+    require_mpesa_callback_auth(x_provider_callback_token)
 
     payload = await _json_payload(request)
     third = payload.get("input_ThirdPartyConversationID") or payload.get("output_ThirdPartyConversationID")

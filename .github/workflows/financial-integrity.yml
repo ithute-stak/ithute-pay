@@ -140,6 +140,7 @@ jobs:
             tests/test_b2c_pass_through_ledger_evidence.py \
             tests/test_b2c_pass_through_evidence.py \
             tests/test_b2c_pass_through_provider_identity.py \
+            tests/test_mpesa_production_security_gate.py \
             tests/test_mpesa_certification_readiness.py \
             tests/test_mpesa_sandbox_scenario_review.py \
             tests/test_mpesa_certification_terminal_success_guard.py \
