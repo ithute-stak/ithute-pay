@@ -19,6 +19,8 @@ def test_payment_monitor_empty_summary_is_not_settlement_proof(client, admin_tok
         headers=_auth(admin_token),
     )
     assert response.status_code == 200, response.text
+    assert response.headers["cache-control"] == "private, no-store"
+    assert response.headers["x-content-type-options"] == "nosniff"
     data = response.json()
     assert data["provider_settlement_verified"] is False
     assert data["may_have_external_unrecorded_transactions"] is True
@@ -59,3 +61,25 @@ def test_payment_monitor_validates_window(client, admin_token):
         headers=_auth(admin_token),
     )
     assert response.status_code == 422
+
+
+def test_payment_monitor_requires_platform_admin_not_regular_merchant_user(client):
+    from core.security import hash_password
+    from database.models import User
+    from database.session import SessionLocal
+
+    with SessionLocal() as db:
+        db.add(User(
+            email="monitor-merchant@example.com", full_name="Merchant Staff",
+            password_hash=hash_password("Password123!"), role="merchant_user",
+        ))
+        db.commit()
+    login = client.post("/api/v1/auth/login", json={
+        "email": "monitor-merchant@example.com", "password": "Password123!",
+    })
+    assert login.status_code == 200, login.text
+    response = client.get(
+        "/api/v1/admin/payment-monitor/summary",
+        headers=_auth(login.json()["access_token"]),
+    )
+    assert response.status_code == 403
