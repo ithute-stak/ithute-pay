@@ -1,4 +1,5 @@
 from fastapi import APIRouter
+from routers.payment_monitor import router as payment_monitor_router
 from routers.mpesa_pass_through_preview import router as mpesa_pass_through_preview_router
 from routers.mpesa_pass_through_operations import router as mpesa_pass_through_operations_router
 
@@ -17,6 +18,7 @@ api_router.include_router(platform.router)
 api_router.include_router(auth.router)
 api_router.include_router(notifications.router)
 api_router.include_router(admin.router)
+api_router.include_router(payment_monitor_router)
 api_router.include_router(gateway_admin.router)
 api_router.include_router(golink_callbacks.router)
 api_router.include_router(loanhub_funding_accounts.router)
