@@ -39,8 +39,8 @@ REVIEW_STATUSES = frozenset({
 
 @router.get("/summary")
 def payment_monitor_summary(
-    hours: int = Query(default=24, ge=1, le=720),
     response: Response,
+    hours: int = Query(default=24, ge=1, le=720),
     db: Session = Depends(get_db),
     _: User = Depends(platform_admin),
 ):
