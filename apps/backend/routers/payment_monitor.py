@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
@@ -40,6 +40,7 @@ REVIEW_STATUSES = frozenset({
 @router.get("/summary")
 def payment_monitor_summary(
     hours: int = Query(default=24, ge=1, le=720),
+    response: Response,
     db: Session = Depends(get_db),
     _: User = Depends(platform_admin),
 ):
@@ -48,6 +49,8 @@ def payment_monitor_summary(
     No payment routing, reconciliation posting, or external requests occur.
     Callback payloads, customer data and transaction references are excluded.
     """
+    response.headers["Cache-Control"] = "private, no-store"
+    response.headers["X-Content-Type-Options"] = "nosniff"
     now = datetime.now(timezone.utc)
     start = now - timedelta(hours=hours)
     sections = []
