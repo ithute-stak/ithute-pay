@@ -32,3 +32,9 @@ def test_every_beat_schedule_entry_points_to_a_registered_task() -> None:
 
     assert scheduled == SCHEDULED_TASKS
     assert scheduled <= registered
+
+
+def test_retired_provider_worker_not_registered_or_scheduled() -> None:
+    celery_app.loader.import_default_modules()
+    assert "workers.tasks.reconcile_golink_callbacks" not in celery_app.tasks
+    assert all("golink" not in entry["task"] for entry in celery_app.conf.beat_schedule.values())
