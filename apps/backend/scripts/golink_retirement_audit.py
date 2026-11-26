@@ -23,12 +23,13 @@ TERMINAL = {
 }
 
 
-def inventory(connection):
+def inventory(connection, metadata=Base.metadata):
     report = {}
-    for table in sorted(Base.metadata.tables.values(), key=lambda t: t.name):
+    for table in sorted(metadata.tables.values(), key=lambda t: t.name):
         if "provider" not in table.c:
             continue
-        match = func.lower(func.trim(table.c.provider)) == "golink"
+        normalized = func.lower(func.trim(table.c.provider))
+        match = (normalized == "golink") | normalized.like("golink%")
         count = connection.scalar(select(func.count()).select_from(table).where(match))
         if not count:
             continue

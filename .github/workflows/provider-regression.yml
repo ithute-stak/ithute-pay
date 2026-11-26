@@ -81,6 +81,7 @@ jobs:
             tests/test_golink_migration_policy.py \
             tests/test_celery_task_registration.py \
             tests/test_retired_callback_routes.py \
+            tests/test_golink_retirement_audit.py \
             tests/test_mpesa_hardening.py \
             tests/test_mpesa_response_classification.py \
             tests/test_mpesa_callback_security.py \
