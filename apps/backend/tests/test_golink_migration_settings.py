@@ -19,7 +19,8 @@ def test_migrate_mpesa_to_direct_without_changing_ecocash():
         ecocash={"golink_certified": True, "golink_enabled_for_new": True},
     ))
     assert config.for_new_attempt("MPESA") == "direct"
-    assert config.for_new_attempt("ECOCASH") == "golink"
+    with pytest.raises(RoutingUnavailable):
+        config.for_new_attempt("ECOCASH")
 
 
 def test_direct_is_preferred_when_both_rails_enabled():

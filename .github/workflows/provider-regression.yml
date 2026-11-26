@@ -46,7 +46,6 @@ jobs:
       MPESA_MODE: simulator
       ITHUTE_PUSH_ENABLED: 'false'
       ITHUTE_RECON_PUSH_DISPATCH_ENABLED: 'false'
-      GOLINK_RECONCILIATION_ENABLED: 'false'
       SECRET_KEY: 'isolated-provider-test-secret-at-least-32-chars'
       REDIS_URL: 'redis://localhost:6379/15'
     steps:
@@ -69,7 +68,6 @@ jobs:
           assert u.database == 'ithute_provider_test'
           assert os.environ['MPESA_ENABLED'] == 'false'
           assert os.environ['ITHUTE_PUSH_ENABLED'] == 'false'
-          assert os.environ['GOLINK_RECONCILIATION_ENABLED'] == 'false'
           print('Offline provider-contract test target verified')
           PY
       - name: Run M-PESA and retired-provider contract regressions
@@ -82,6 +80,7 @@ jobs:
             tests/test_golink_configuration.py \
             tests/test_golink_migration_policy.py \
             tests/test_celery_task_registration.py \
+            tests/test_retired_callback_routes.py \
             tests/test_mpesa_hardening.py \
             tests/test_mpesa_response_classification.py \
             tests/test_mpesa_callback_security.py \
