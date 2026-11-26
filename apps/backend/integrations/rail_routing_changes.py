@@ -51,8 +51,9 @@ def propose_rail_routing_change(
         raise RoutingChangeRejected("Certification evidence flags must be booleans")
     if after.direct_enabled and (not after.direct_certified or not certified_direct_evidence):
         raise RoutingChangeRejected("Direct provider certification evidence required")
-    if after.golink_enabled_for_new and (not after.golink_certified or not certified_golink_evidence):
-        raise RoutingChangeRejected("Golink certification evidence required")
+    # Legacy policy fields remain readable for audit compatibility only.
+    if after.golink_enabled_for_new or after.golink_certified or certified_golink_evidence:
+        raise RoutingChangeRejected("Retired provider cannot be proposed or certified")
     before = current.mpesa if rail == "MPESA" else current.ecocash
     if after == before:
         raise RoutingChangeRejected("No routing change proposed")
