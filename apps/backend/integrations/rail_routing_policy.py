@@ -45,8 +45,7 @@ def choose_new_payment_provider(rail: Rail, policy: RailRoutingPolicy) -> Provid
         raise RoutingUnavailable("Unsupported mobile-money rail")
     if policy.direct_certified and policy.direct_enabled:
         return "direct"
-    if policy.golink_certified and policy.golink_enabled_for_new:
-        return "golink"
+    # Retired provider: legacy settings must never enable new Golink routing.
     raise RoutingUnavailable("No certified and enabled provider for new payments")
 
 
