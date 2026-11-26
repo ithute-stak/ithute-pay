@@ -1,40 +1,45 @@
-"""Golink configuration must be inert and must not modify direct M-Pesa."""
+"""Retired provider configuration must not affect direct M-Pesa."""
+from types import SimpleNamespace
+
 import pytest
 from fastapi import HTTPException
 from sqlalchemy import select
+
 from database.models import GatewayProviderConfiguration
 from database.session import SessionLocal
-from services.gateway_configuration import upsert_gateway_provider_configuration, activate_gateway_provider_configuration
+from services.gateway_configuration import (
+    active_gateway_provider_configuration,
+    upsert_gateway_provider_configuration,
+    validate_configuration_for_activation,
+)
 
 
-def test_golink_configuration_disabled_and_direct_mpesa_preserved():
+@pytest.mark.parametrize("environment,mode", [("sandbox", "simulator"), ("production", "live")])
+@pytest.mark.parametrize("provider", ["golink", " GoLink "])
+def test_retired_provider_configuration_rejected_without_mutating_mpesa(environment, mode, provider):
     with SessionLocal() as db:
-        mpesa_before = db.scalar(select(GatewayProviderConfiguration).where(GatewayProviderConfiguration.provider == "mpesa"))
-        old_id = mpesa_before.id if mpesa_before else None
-        row = upsert_gateway_provider_configuration(db, {
-            "provider": "golink", "environment": "sandbox", "mode": "simulator",
-            "enabled": True, "active": False,
-        })
-        db.commit()
-        assert row.provider == "golink"
-        assert row.enabled is False
-        assert row.active is False
-        assert row.base_url == "https://sandbox.transact.golink.co.ls/api"
-        assert row.callback_url.endswith("/provider-callbacks/golink")
-        mpesa_after = db.scalar(select(GatewayProviderConfiguration).where(GatewayProviderConfiguration.provider == "mpesa"))
-        assert (mpesa_after.id if mpesa_after else None) == old_id
+        before = db.execute(select(GatewayProviderConfiguration.id,
+                                   GatewayProviderConfiguration.enabled,
+                                   GatewayProviderConfiguration.active).where(
+            GatewayProviderConfiguration.provider == "mpesa")).all()
         with pytest.raises(HTTPException) as exc:
-            activate_gateway_provider_configuration(db, row)
-        assert exc.value.status_code == 409
+            upsert_gateway_provider_configuration(db, {
+                "provider": provider, "environment": environment, "mode": mode,
+                "enabled": True, "active": True,
+            })
+        assert exc.value.status_code == 400
+        assert not db.new and not db.dirty
+        after = db.execute(select(GatewayProviderConfiguration.id,
+                                  GatewayProviderConfiguration.enabled,
+                                  GatewayProviderConfiguration.active).where(
+            GatewayProviderConfiguration.provider == "mpesa")).all()
+        assert before == after
 
 
-def test_golink_production_configuration_cannot_activate():
-    with SessionLocal() as db:
-        row = upsert_gateway_provider_configuration(db, {
-            "provider": "golink", "environment": "production", "mode": "live",
-            "enabled": True, "active": False,
-        })
-        assert row.base_url == "https://transact.golink.co.ls/api"
-        assert row.enabled is False
-        with pytest.raises(HTTPException):
-            activate_gateway_provider_configuration(db, row)
+def test_legacy_configuration_cannot_be_activated_or_selected():
+    row = SimpleNamespace(provider="golink", enabled=True, mode="simulator")
+    with pytest.raises(HTTPException) as exc:
+        validate_configuration_for_activation(row)
+    assert exc.value.status_code == 409
+    # Even a stale enabled/active database row must never be queried.
+    assert active_gateway_provider_configuration(None, "golink") is None
