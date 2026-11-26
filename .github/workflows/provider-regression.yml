@@ -72,19 +72,16 @@ jobs:
           assert os.environ['GOLINK_RECONCILIATION_ENABLED'] == 'false'
           print('Offline provider-contract test target verified')
           PY
-      - name: Run M-PESA and Golink provider-contract regressions
+      - name: Run M-PESA and retired-provider contract regressions
         working-directory: apps/backend
         run: |
           python -m pytest -vv -ra --tb=short --durations=10 \
             --junitxml=provider-regression-results.xml \
             tests/test_provider_staging_contract.py \
             tests/test_golink_route_isolation.py \
-            tests/test_golink_release_gate.py \
-            tests/test_golink_reconciliation.py \
-            tests/test_golink_terminal_replays.py \
-            tests/test_golink_webhook_identity.py \
-            tests/test_golink_webhooks.py \
-            tests/test_golink_sandbox_probe.py \
+            tests/test_golink_configuration.py \
+            tests/test_golink_migration_policy.py \
+            tests/test_celery_task_registration.py \
             tests/test_mpesa_hardening.py \
             tests/test_mpesa_response_classification.py \
             tests/test_mpesa_callback_security.py \
