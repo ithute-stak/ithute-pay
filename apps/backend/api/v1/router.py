@@ -6,7 +6,7 @@ from providers.ecocash.routes import ROUTERS as ECOCASH_ROUTERS
 from providers.mpesa.routes import ROUTERS as MPESA_ROUTERS
 from providers.paypal.routes import ROUTERS as PAYPAL_ROUTERS
 from routers import (
-    admin, auth, authorizations, checkout, developer, finance, gateway_admin, golink_callbacks, health,
+    admin, auth, authorizations, checkout, developer, finance, gateway_admin, health,
     loanhub_fee_preview, loanhub_intent_preview, loanhub_signed_handshake, loanhub_signed_intent_preview, loanhub_funding_accounts, loanhub_funding_status, loanhub_master_binding, mandates, merchant_network_admin, notifications, operations,
     payments, platform, portal, provider_catalog, providers, public, tenant_credentials, tenant_management, tenant_portal, tenant_reconciliation, tenant_reconciliation_cases, tenant_reconciliation_operations, tenant_reconciliation_alerts, tenant_push_operations, tenant_reporting, ws,
 )
@@ -18,7 +18,6 @@ api_router.include_router(auth.router)
 api_router.include_router(notifications.router)
 api_router.include_router(admin.router)
 api_router.include_router(gateway_admin.router)
-api_router.include_router(golink_callbacks.router)
 api_router.include_router(loanhub_funding_accounts.router)
 api_router.include_router(loanhub_funding_status.router)
 api_router.include_router(payments.router)
