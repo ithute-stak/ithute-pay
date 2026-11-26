@@ -48,8 +48,6 @@ services:
       ITHUTE_AUTH_ENABLED: "false"
       ITHUTE_PUSH_ENABLED: "false"
       ITHUTE_RECON_PUSH_DISPATCH_ENABLED: "false"
-      GOLINK_COLLECTIONS_ENABLED: "false"
-      GOLINK_RECONCILIATION_ENABLED: "false"
       SANDBOX_TEST_LAB_ENABLED: "false"
       REDIS_URL: redis://redis:6379/0
       DATABASE_URL: postgresql+psycopg://ithutepay_staging:${STAGING_DB_PASSWORD:?Required}@postgres:5432/ithutepay_staging

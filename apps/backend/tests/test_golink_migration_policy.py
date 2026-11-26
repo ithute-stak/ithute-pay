@@ -13,9 +13,11 @@ def test_direct_wins_when_both_providers_certified(rail):
     assert choose_new_payment_provider(rail, policy) == "direct"
 
 
-def test_golink_only_when_explicitly_certified_and_enabled_for_new():
+@pytest.mark.parametrize("rail", ["MPESA", "ECOCASH"])
+def test_retired_golink_cannot_be_reenabled_by_legacy_settings(rail):
     policy = RailRoutingPolicy(golink_certified=True, golink_enabled_for_new=True)
-    assert choose_new_payment_provider("MPESA", policy) == "golink"
+    with pytest.raises(RoutingUnavailable):
+        choose_new_payment_provider(rail, policy)
 
 
 def test_disable_golink_mpesa_after_direct_go_live():

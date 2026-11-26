@@ -69,3 +69,14 @@ def test_audit_event_is_deterministic_and_non_activating():
 def test_audit_event_rejects_invalid_source():
     with pytest.raises(RoutingChangeRejected):
         routing_change_audit_record(None)
+
+
+@pytest.mark.parametrize("policy,evidence", [
+    (RailRoutingPolicy(True, True, True, True), True),
+    (RailRoutingPolicy(True, True, True, False), False),
+    (RailRoutingPolicy(True, True, False, True), False),
+    (RailRoutingPolicy(True, True, False, False), True),
+])
+def test_retired_provider_proposals_rejected_even_with_certification(policy, evidence):
+    with pytest.raises(RoutingChangeRejected, match="Retired provider"):
+        propose(after=policy, certified_golink_evidence=evidence)

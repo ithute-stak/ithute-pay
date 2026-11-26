@@ -42,14 +42,13 @@ def test_staging_cannot_inherit_enabled_payment_or_auto_migration():
         "MPESA_ENABLED",
         "ITHUTE_PUSH_ENABLED",
         "ITHUTE_RECON_PUSH_DISPATCH_ENABLED",
-        "GOLINK_COLLECTIONS_ENABLED",
-        "GOLINK_RECONCILIATION_ENABLED",
         "RUN_MIGRATIONS_ON_START",
         "RUN_BACKGROUND_JOBS",
         "AUTO_CREATE_PLATFORM_ADMIN",
         "SANDBOX_TEST_LAB_ENABLED",
     ):
         assert env[key] == "false", key
+    assert not any(key.startswith("GOLINK_") for key in env)
     assert env["MPESA_MODE"] == "simulator"
     assert env["MPESA_ENVIRONMENT"] == "sandbox"
     assert env["DATABASE_URL"].endswith("@postgres:5432/ithutepay_staging")

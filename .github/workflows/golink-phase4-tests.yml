@@ -1,4 +1,4 @@
-name: Golink Phase 4 regression
+name: Retired-provider routing regression
 on:
   pull_request:
     paths:
@@ -45,9 +45,9 @@ jobs:
           dev_dependencies = project["project"]["optional-dependencies"]["dev"]
           subprocess.check_call([sys.executable, "-m", "pip", "install", *dependencies, *dev_dependencies])
           PY
-      - name: Compile Golink Python modules and tests
+      - name: Compile routing modules and tests
         run: |
-          python -m compileall -q providers/golink integrations/rail_routing_policy.py integrations/rail_routing_settings.py integrations/rail_routing_changes.py integrations/rail_routing_audit.py integrations/rail_routing_review.py integrations/rail_routing_activation.py tests/test_golink_*.py workers/golink_reconciliation.py
+          python -m compileall -q integrations/rail_routing_policy.py integrations/rail_routing_settings.py integrations/rail_routing_changes.py integrations/rail_routing_audit.py integrations/rail_routing_review.py integrations/rail_routing_activation.py tests/test_golink_*.py
       - name: Golink regression tests
         run: |
           # The test database must always be created fresh in CI.
@@ -93,5 +93,5 @@ jobs:
           requirements = project["project"]["dependencies"] + project["project"]["optional-dependencies"]["dev"]
           subprocess.check_call([sys.executable, "-m", "pip", "install", *requirements])
           PY
-      - name: Concurrent webhook reconciliation on PostgreSQL
-        run: python -m pytest -q tests/test_golink_terminal_replays.py tests/test_golink_routing_review_concurrency.py tests/test_golink_routing_review_unique.py -k 'postgres_two_workers or postgres_two_administrators or postgres_unique_review_index'
+      - name: Concurrent routing review on PostgreSQL
+        run: python -m pytest -q tests/test_golink_routing_review_concurrency.py tests/test_golink_routing_review_unique.py -k 'postgres_two_administrators or postgres_unique_review_index'
