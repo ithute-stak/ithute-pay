@@ -83,31 +83,9 @@ class GolinkClient:
                              amount_minor: int, currency: str, payer: dict[str, Any],
                              payee: dict[str, Any], stored_payment_method_id: str | None = None,
                              transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
-        # Fail closed: live Golink payment initiation requires a separately
-        # reviewed certification release. Environment flags alone cannot enable it.
-        if self.environment != "sandbox":
-            raise GolinkConfigurationError("Golink production payment initiation is not certified")
-        # Additional rails have no verified Golink contract. Block even direct
-        # calls to this lower-level client until a separate certified adapter exists.
-        if direction != "DEBIT" or rail not in {"MPESA", "ECOCASH"}:
-            raise ValueError("Unsupported Golink direction or rail")
-        if stored_payment_method_id is not None:
-            raise ValueError("Stored payment methods are not certified for this adapter")
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or isinstance(amount_minor, bool) or not isinstance(amount_minor, int) or amount_minor <= 0:
-            raise ValueError("Valid idempotency key and positive minor-unit amount required")
-        if len(idempotency_key) > 128 or any(ord(c) < 33 or ord(c) > 126 for c in idempotency_key):
-            raise ValueError("Invalid idempotency key characters or length")
-        if not isinstance(payer, dict) or not isinstance(payee, dict):
-            raise ValueError("Payer and payee must be mappings")
-        if not isinstance(payer.get("phone"), str) or not payer["phone"].strip():
-            raise ValueError("Payer phone is required")
-        if not isinstance(payee.get("name"), str) or not payee["name"].strip():
-            raise ValueError("Payee name is required")
-        if currency != "LSL":
-            raise ValueError("Only LSL is enabled in this initial adapter")
-        payload = {"direction": direction, "rail": rail, "idempotencyKey": idempotency_key,
-                   "amountMinor": amount_minor, "currency": currency, "payer": payer, "payee": payee}
-        return await self._request("POST", "payments", payload=payload, transport=transport)
+        # Retirement: no new upstream payment may be initiated in any environment.
+        # Existing payment status enquiries remain available during reconciliation.
+        raise GolinkConfigurationError("Golink payment initiation has been retired")
 
     async def get_payment(self, payment_id: str, *, transport: httpx.AsyncBaseTransport | None = None) -> dict[str, Any]:
         if (not isinstance(payment_id, str) or not payment_id
