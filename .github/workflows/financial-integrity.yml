@@ -148,6 +148,7 @@ jobs:
             tests/test_mpesa_certification_evidence_redaction.py \
             tests/test_mpesa_certification_secondary_redaction.py \
             tests/test_mpesa_certification_structured_diagnostics.py \
+            tests/test_mpesa_certification_top_level_evidence.py \
             tests/test_mpesa_certification_negative_scenario_guard.py \
             tests/test_mpesa_certification_suite_coverage.py \
             tests/test_mpesa_sandbox_connection_error_redaction.py \
