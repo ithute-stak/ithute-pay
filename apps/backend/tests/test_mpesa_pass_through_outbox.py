@@ -35,7 +35,7 @@ def test_reservation_commits_with_leg_state():
         merchant, app, tx = setup(db, "durable")
         item = reserve_operation(db, merchant_id=merchant, application_id=app,
                                  transaction_id=tx, leg="funding", reference="f-001")
-        assert item.amount == Decimal("1010.00")
+        assert item.amount == Decimal("1020.00")
         db.commit()
     with SessionLocal() as db:
         saved = db.scalar(select(MpesaPassThroughOperationIntent).where(

@@ -21,7 +21,7 @@ from services.mpesa_pass_through_reconciliation import reconcile_authenticated_q
 from services.mpesa_pass_through_store import create_quote_record
 
 
-def observation(*, ref="fund-a", amount="1010.00", source="YYYY",
+def observation(*, ref="fund-a", amount="1020.00", source="YYYY",
                 destination="XXXX", status="succeeded", txid="vodacom-f-1",
                 currency="LSL", reversed=False):
     return ProviderQueryObservation(
@@ -68,13 +68,13 @@ def payout(db, ids, ref="payout-a", txid="vodacom-p-1", status="succeeded"):
 
 
 @pytest.mark.parametrize("change", [
-    {"ref": "forged"}, {"amount": "1010.01"},
+    {"ref": "forged"}, {"amount": "1020.01"},
     {"currency": "ZAR"}, {"source": "OTHER"}, {"destination": "OTHER"},
     {"status": "not-a-status"}, {"reversed": True},
     {"status": "succeeded", "txid": None},
 ])
 def test_reject_mismatched_provider_query(change):
-    expected = ExpectedMovement("fund-a", Decimal("1010"), "LSL", "YYYY", "XXXX")
+    expected = ExpectedMovement("fund-a", Decimal("1020"), "LSL", "YYYY", "XXXX")
     with pytest.raises(TransactionError):
         validate_provider_query(expected, observation(**change))
 
@@ -170,7 +170,42 @@ def test_wrong_amount_never_posts_a_fee():
 
 
 def test_observation_requires_finite_two_decimal_amount():
-    expected = ExpectedMovement("fund-a", Decimal("1010"), "LSL", "YYYY", "XXXX")
-    for amount in ("NaN", "Inf", "1010.001", "-1010", ""):
+    expected = ExpectedMovement("fund-a", Decimal("1020"), "LSL", "YYYY", "XXXX")
+    for amount in ("NaN", "Inf", "1020.001", "-1020", ""):
         with pytest.raises(TransactionError):
             validate_provider_query(expected, observation(amount=amount))
+
+
+def test_b2b_full_beneficiary_amount_and_single_fee():
+    from database.models import JournalLine, LedgerAccount
+    with SessionLocal() as db:
+        merchant = Merchant(name="B2B reconciliation", slug="pt-b2b-recon")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="B2B", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="outgoing", transaction_type="b2b",
+                  principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="b2b-recon", request={"amount": "1000"}, quote=q,
+            b2b_parties={"sender": "YYYY", "gateway": "XXXX", "recipient": "ZZZZ",
+                         "recipient_merchant_id": "synthetic-recipient", "environment": "sandbox"})
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        funding(db, ids)
+        reserve_operation(db, **ids, leg="onward", reference="b2b-pay")
+        with pytest.raises(TransactionError):
+            bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="OTHER")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="ZZZZ")
+        with pytest.raises(TransactionError):
+            reconcile_authenticated_query(db, **ids, leg="onward", source_shortcode="XXXX",
+                destination="ZZZZ", observation=observation(ref="b2b-pay", amount="980", source="XXXX",
+                destination="ZZZZ", txid="b2b-paid"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        for _ in range(2):
+            assert reconcile_authenticated_query(db, **ids, leg="onward", source_shortcode="XXXX",
+                destination="ZZZZ", observation=observation(ref="b2b-pay", amount="1000",
+                source="XXXX", destination="ZZZZ", txid="b2b-paid")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
+        revenue = db.scalar(select(func.sum(JournalLine.credit))
+            .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
+            .where(LedgerAccount.merchant_id == merchant.id, LedgerAccount.code == "4000"))
+        assert revenue == Decimal("20.00")
