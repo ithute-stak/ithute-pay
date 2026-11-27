@@ -435,3 +435,21 @@ def test_offline_worker_full_journey(kind, gross, cost, credit, payout_amount, f
     with SessionLocal() as db:
         assert plan_next_operation(db, **ids)["action"] == "completed"
         assert db.scalar(select(func.count(JournalEntry.id))) == (4 if kind == "c2b" else 3)
+
+
+def test_direct_live_accounting_cannot_bypass_settlement_receipts():
+    from services.mpesa_pass_through_accounting import post_verified_outgoing
+    from services.mpesa_pass_through_store import record_verified_evidence
+    with SessionLocal() as db:
+        ids = new(db, "direct-live-guard")
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        record_verified_evidence(db, merchant_id=ids["merchant_id"],
+            application_id=ids["application_id"], record_id=ids["transaction_id"],
+            leg="funding", reference="fund-a", status="succeeded",
+            provider_transaction_id="unverified-gross", evidence=b"gross-only")
+        with pytest.raises(TransactionError, match="Live accounting requires"):
+            post_verified_outgoing(db, **ids)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0

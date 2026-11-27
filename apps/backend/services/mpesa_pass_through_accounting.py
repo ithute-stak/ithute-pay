@@ -16,7 +16,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database.models import JournalEntry, JournalLine, LedgerAccount
+from database.models import Application, JournalEntry, JournalLine, LedgerAccount
+from database.models.mpesa_pass_through_identity import MpesaPassThroughProviderReceipt
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
 from services.ledger import ZERO, money, post_journal
 from services.mpesa_pass_through_lifecycle import LegStatus, TransactionError
@@ -50,6 +51,25 @@ def _require_confirmed_leg(db: Session, row, name: str) -> None:
     ))
     if intent is None:
         raise TransactionError(name + " has no matching reserved operation")
+    app = db.get(Application, row.application_id)
+    if app is None or app.merchant_id != row.merchant_id or app.environment not in {"test", "live"}:
+        raise TransactionError("Invalid accounting application scope")
+    if app.environment == "live":
+        saved = (row.quote_snapshot or {}).get("verified_provider_costs", {}).get(name)
+        receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+            MpesaPassThroughProviderReceipt.intent_id == intent.id))
+        if (not saved or not saved.get("cost_digest") or saved.get("source_debit") is None
+                or saved.get("provider_id") != getattr(row, name + "_provider_id")
+                or saved.get("movement_digest") != getattr(row, name + "_evidence_hash")
+                or receipt is None or receipt.provider != "mpesa"
+                or receipt.provider_transaction_id != saved.get("provider_id")
+                or receipt.canonical_evidence_hash != saved.get("movement_digest")):
+            raise TransactionError("Live accounting requires matched settlement receipt and source debit")
+        expected_fee = row.provider_cost if row.direction == "incoming" and name == "funding" else ZERO
+        if (saved.get("source_debit") != format(intent.amount, ".2f")
+                or saved.get("fee") != format(expected_fee, ".2f")
+                or saved.get("net") != format(intent.amount - expected_fee, ".2f")):
+            raise TransactionError("Live accounting settlement amounts do not reconcile")
 
 
 def _existing_or_post(
