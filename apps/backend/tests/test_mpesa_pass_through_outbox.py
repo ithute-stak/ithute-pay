@@ -292,3 +292,71 @@ def test_adapter_arguments_refuse_truncated_reference():
         bind_leg_identity(db, **args, source_party="YYYY", destination_party="XXXX")
         with pytest.raises(TransactionError, match="truncation"):
             build_sandbox_adapter_arguments(db, **args)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,leg,expected_endpoint,amount", [
+    ("c2b", "funding", "c2bPayment/singleStage/", "1000.00"),
+    ("c2b", "onward", "b2bPayment/", "980.00"),
+    ("b2c", "funding", "b2bPayment/", "1020.00"),
+    ("b2c", "onward", "b2cPayment/", "1000.00"),
+    ("b2b", "funding", "b2bPayment/", "1020.00"),
+    ("b2b", "onward", "b2bPayment/", "1000.00"),
+])
+async def test_commercial_adapter_wire_contract_offline(kind, leg, expected_endpoint, amount):
+    """Run actual client serialization with an overridden transport; no network."""
+    from services.mpesa_pass_through_outbox import build_sandbox_adapter_arguments
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from integrations.mpesa.client import MpesaClient
+
+    class OfflineClient(MpesaClient):
+        def __init__(self, shortcode):
+            self.shortcode = shortcode
+            self.country = "LES"
+            self.environment = "sandbox"
+            self.calls = []
+        async def _request(self, method, suffix, **kwargs):
+            self.calls.append((method, suffix, kwargs["json_body"]))
+            return 200, {"output_ResponseCode": "INS-0", "output_TransactionID": "synthetic-only"}
+
+    with SessionLocal() as db:
+        merchant = Merchant(name="Wire " + kind + leg, slug="wire-" + kind + "-" + leg)
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Wire", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming" if kind == "c2b" else "outgoing",
+                  transaction_type=kind, principal="1000", approved=True)
+        sender = "26659000000" if kind == "c2b" else "YYYY"
+        recipient = "26659000001" if kind == "b2c" else "ZZZZ"
+        parties = {"sender": sender, "gateway": "XXXX", "recipient": recipient,
+                   "recipient_merchant_id": "synthetic-recipient", "environment": "sandbox"} if kind == "b2b" else None
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="wire", request={"amount": "1000"}, quote=q, b2b_parties=parties)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        if leg == "onward":
+            reserve_operation(db, **ids, leg="funding", reference="prior-funding")
+            bind_leg_identity(db, **ids, leg="funding", source_party=sender, destination_party="XXXX")
+            record_verified_evidence(db, merchant_id=merchant.id, application_id=app.id,
+                record_id=row.id, leg="funding", reference="prior-funding",
+                status="succeeded", provider_transaction_id="synthetic-funding", evidence=b"offline")
+        source, destination = (sender, "XXXX") if leg == "funding" else ("XXXX", recipient)
+        reserve_operation(db, **ids, leg=leg, reference="wire-reference")
+        bind_leg_identity(db, **ids, leg=leg, source_party=source, destination_party=destination)
+        plan = build_sandbox_adapter_arguments(db, **ids, leg=leg)
+        client = OfflineClient(plan["required_shortcode"])
+        result = await getattr(client, plan["adapter_method"])(**plan["arguments"])
+        assert len(client.calls) == 1
+        method, endpoint, body = client.calls[0]
+        assert method == "POST" and endpoint == expected_endpoint
+        assert body["input_Amount"] == amount
+        assert body["input_Country"] == "LES" and body["input_Currency"] == "LSL"
+        assert body["input_TransactionReference"] == body["input_ThirdPartyConversationID"] == "wire-reference"
+        if expected_endpoint == "b2bPayment/":
+            assert body["input_PrimaryPartyCode"] == source
+            assert body["input_ReceiverPartyCode"] == destination
+        else:
+            assert body["input_ServiceProviderCode"] == ("XXXX" if kind == "c2b" else source)
+            assert body["input_CustomerMSISDN"] == (source if kind == "c2b" else destination)
+        assert result.accepted and plan["dispatch_authorized"] is False
+        from database.models import JournalEntry
+        assert not db.scalars(select(JournalEntry)).all()
