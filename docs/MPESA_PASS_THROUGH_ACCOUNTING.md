@@ -37,3 +37,25 @@ An authenticated reversal observation matching the original confirmed receipt cr
 - [ ] Obtain approved deployment and rollback plan, financial/security sign-off and explicit activation approval.
 
 Keep live pass-through disabled. A successful CI run establishes only the tests it executed. The direct M-Pesa integration is not part of this activation.
+
+
+## Provider certification handoff
+
+Use a disposable test application and explicitly approved sandbox accounts. Do not use production credentials, actual customer numbers or real funds for these tests. Never store API keys, session tokens or unredacted customer information in CI artifacts.
+
+| Test | Expected sender debit | Expected recipient credit | Expected deduction |
+|---|---:|---:|---:|
+| C2B customer to gateway | 1000.00 | 990.00 | 10.00 |
+| C2B gateway to merchant | 980.00 | 980.00 | 0.00 |
+| B2C merchant to gateway | 1020.00 | 1020.00 | 0.00 |
+| B2C gateway to customer | 1000.00 | 1000.00 | 0.00 |
+| B2B merchant to gateway | 1020.00 | 1020.00 | 0.00 |
+| B2B gateway to recipient merchant | 1000.00 | 1000.00 | 0.00 |
+
+These amounts are hypothetical certification targets, not observed provider results. If the provider charges differently, stop and review commercial agreements and allocation rules before continuing.
+
+For each operation capture the original reference, provider transaction identifier, authenticated account scope, final status, currency, source debit, destination credit, deducted fee and statement reconciliation reference. Preserve redacted evidence with the exact release commit and independent reviewer approval. A generic accepted response is insufficient; missing evidence is a blocker, not zero cost. Sender debit evidence is mandatory for live reconciliation, live journal posting and onward reservation. Existing direct M-Pesa must remain independent.
+
+Offline CI exercises request serialization through the existing client with an overridden network transport, persistent worker claims, duplicate confirmation and PostgreSQL races. It does not perform a real sandbox transaction. The adapter argument builder returns dispatch_authorized=false. Reserved or ambiguous operations must only be queried, never automatically submitted. No actual pass-through sender or public execution endpoint is enabled. Reversal holds remain manual pending verified compensation rules.
+
+Release decision: the pricing, preview and reporting foundation may be considered separately for a disabled-feature release after exact-commit CI and review. Live activation is a separate decision and must not be implied by merging or deploying the foundation.
