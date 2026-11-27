@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from decimal import Decimal
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
@@ -20,6 +20,7 @@ from database.models import (
 )
 from database.session import get_db
 from services.audit import write_audit
+from services.commercial_pricing import CommercialTerms, fee_quote
 
 router = APIRouter(prefix="/admin/merchant-network", tags=["Merchant Network Administration"])
 
@@ -326,3 +327,106 @@ def approve_agreement(
     )
     db.commit()
     return {"id": agreement.id, "version": agreement.version, "status": agreement.status}
+
+
+@router.get("/agreements/{agreement_id}/quote")
+def quote_approved_agreement(
+    agreement_id: str,
+    amount: Decimal = Query(gt=0, le=100000000, decimal_places=2),
+    direction: str = Query(pattern="^(inbound|outbound)$"),
+    db: Session = Depends(get_db),
+    _: User = Depends(_network_admin),
+):
+    """Read-only commercial quote; never creates a payment or posts a fee.
+
+    Restricted to platform network administrators because tenant commercial
+    terms are private and must not be readable across unrelated tenants.
+    """
+    agreement = db.get(MerchantCommercialAgreement, agreement_id)
+    if agreement is None:
+        raise HTTPException(status_code=404, detail="Agreement not found")
+
+    master = _master(db)
+    contract = db.scalar(select(TenantMerchantContract).where(
+        TenantMerchantContract.tenant_merchant_id == agreement.merchant_id,
+        TenantMerchantContract.master_merchant_id == master.merchant_id,
+    ))
+    if (
+        contract is None or contract.status != "approved"
+        or contract.kyc_status != "verified"
+        or contract.custody_mode != "own_shortcode"
+        or agreement.status != "approved"
+    ):
+        raise HTTPException(status_code=409, detail="Approved own-shortcode contract and agreement required")
+
+    terms = CommercialTerms(
+        currency=agreement.currency,
+        inbound_fixed_fee=agreement.inbound_fixed_fee,
+        inbound_percentage_fee=agreement.inbound_percentage_fee,
+        outbound_fixed_fee=agreement.outbound_fixed_fee,
+        outbound_percentage_fee=agreement.outbound_percentage_fee,
+        provider_cost_payer=agreement.provider_cost_payer,
+    )
+    try:
+        quote = fee_quote(amount, direction, terms)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        **quote,
+        "merchant_id": agreement.merchant_id,
+        "agreement_id": agreement.id,
+        "agreement_version": agreement.version,
+        "quotation_only": True,
+        "warning": "Commercial fees only; excludes provider costs, settlement rules and authorization. No funds move.",
+    }
+
+
+@router.get("/tenants/{merchant_id}/readiness")
+def tenant_commercial_readiness(
+    merchant_id: str,
+    db: Session = Depends(get_db),
+    _: User = Depends(_network_admin),
+):
+    """Report onboarding evidence without asserting payment-rail activation."""
+    master = _master(db)
+    contract = db.scalar(select(TenantMerchantContract).where(
+        TenantMerchantContract.tenant_merchant_id == merchant_id,
+        TenantMerchantContract.master_merchant_id == master.merchant_id,
+    ))
+    if contract is None:
+        raise HTTPException(status_code=404, detail="Tenant contract not found")
+
+    approved_agreement = db.scalar(select(MerchantCommercialAgreement).where(
+        MerchantCommercialAgreement.merchant_id == merchant_id,
+        MerchantCommercialAgreement.status == "approved",
+    ).order_by(MerchantCommercialAgreement.version.desc()))
+
+    provider_accounts = db.scalars(select(TenantProviderAccount).where(
+        TenantProviderAccount.merchant_id == merchant_id,
+    )).all()
+    verified_own_shortcode = any(
+        account.ownership_status == "verified"
+        and account.verified_at is not None
+        and account.provider == "mpesa"
+        and account.environment == "production"
+        for account in provider_accounts
+    )
+    checks = {
+        "contract_approved": contract.status == "approved",
+        "kyc_verified": contract.kyc_status == "verified",
+        "own_shortcode": contract.custody_mode == "own_shortcode",
+        "commercial_agreement_approved": approved_agreement is not None,
+        "production_shortcode_verified": verified_own_shortcode,
+    }
+    return {
+        "merchant_id": merchant_id,
+        "checks": checks,
+        "missing": [key for key, complete in checks.items() if not complete],
+        "onboarding_evidence_complete": all(checks.values()),
+        # This endpoint MUST NOT imply payment execution is live. Enforcement
+        # at each money-moving route and provider approval remain separate.
+        "payment_execution_enabled": False,
+        "settlement_enabled": False,
+        "master_short_code_custody_enabled": False,
+        "warning": "Onboarding evidence is not permission to process funds.",
+    }
