@@ -185,3 +185,64 @@ def preview_incoming_allocation(quote, *, actual_provider_cost: Decimal,
         "potential_platform_fee": quote.ithutepay_fee,
         "recognized_revenue": ZERO,
     }
+
+
+def post_verified_incoming(db: Session, *, merchant_id: str, application_id: str,
+                           transaction_id: str, actual_provider_cost: Decimal,
+                           actual_master_credit: Decimal,
+                           actual_recipient_credit: Decimal | None = None) -> list[JournalEntry]:
+    """Internal accounting foundation; not connected to live reconciliation.
+
+    Trusted caller must independently authenticate net credit and provider cost
+    evidence for the original funding, and actual recipient credit for onward
+    settlement. Assumes tenant-borne funding cost and no additional onward
+    charge. Incoming refund policy is intentionally not supported.
+    Caller must roll back on any exception.
+    """
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id, for_update=True)
+    if row is None or row.currency != "LSL":
+        raise TransactionError("No LSL transaction in authenticated tenant scope")
+    tx = load_lifecycle(row)
+    allocation = preview_incoming_allocation(tx.quote, actual_provider_cost=actual_provider_cost,
+                                             actual_master_credit=actual_master_credit)
+    if tx.refund.status != LegStatus.NOT_STARTED:
+        raise TransactionError("Incoming refund accounting requires separate approval")
+    if tx.funding.status != LegStatus.SUCCEEDED:
+        raise TransactionError("Incoming funding is not confirmed")
+    _require_confirmed_leg(db, row, "funding")
+    if tx.onward.status == LegStatus.SUCCEEDED:
+        _require_confirmed_leg(db, row, "onward")
+        if (not isinstance(actual_recipient_credit, Decimal) or
+                not actual_recipient_credit.is_finite() or
+                actual_recipient_credit != allocation["merchant_onward_amount"]):
+            raise TransactionError("Actual recipient credit differs from approved allocation")
+    elif actual_recipient_credit is not None:
+        raise TransactionError("Recipient credit supplied without confirmed onward movement")
+
+    # Record gross funding and the tenant-borne provider deduction separately.
+    # Provider cost is not platform revenue or platform expense in this model.
+    gross = allocation["gross_customer_payment"]
+    cost = allocation["provider_cost"]
+    entries = [_existing_or_post(db, row=row, event="funding", lines=[
+        ("provider_clearing", gross, ZERO, "Gross customer payment confirmed"),
+        ("merchant_payable", ZERO, gross, "Gross merchant entitlement"),
+    ])]
+    if cost > ZERO:
+        entries.append(_existing_or_post(db, row=row, event="provider_cost", lines=[
+            ("merchant_payable", cost, ZERO, "Tenant-borne provider fee"),
+            ("provider_clearing", ZERO, cost, "Verified provider deduction"),
+        ]))
+    if tx.onward.status == LegStatus.SUCCEEDED:
+        amount = allocation["merchant_onward_amount"]
+        entries.append(_existing_or_post(db, row=row, event="onward", lines=[
+            ("merchant_payable", amount, ZERO, "Merchant settlement confirmed"),
+            ("provider_clearing", ZERO, amount, "Verified merchant credit"),
+        ]))
+        fee = allocation["potential_platform_fee"]
+        if fee > ZERO:
+            entries.append(_existing_or_post(db, row=row, event="fee", lines=[
+                ("merchant_payable", fee, ZERO, "Earn fee after confirmed settlement"),
+                ("gateway_fee_revenue", ZERO, fee, "Agreed incoming service fee"),
+            ]))
+    return entries

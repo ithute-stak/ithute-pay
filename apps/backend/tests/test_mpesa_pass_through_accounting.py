@@ -188,3 +188,37 @@ def test_incoming_allocation_rejects_unreconciled_provider_cost(cost, credit):
     q = quote(tenant_id="tenant-a", direction="incoming", principal="1000", approved=True)
     with pytest.raises(TransactionError):
         preview_incoming_allocation(q, actual_provider_cost=Decimal(cost), actual_master_credit=Decimal(credit))
+
+
+def test_incoming_journals_separate_provider_cost_and_platform_revenue():
+    from services.mpesa_pass_through_accounting import post_verified_incoming
+    with SessionLocal() as db:
+        merchant = Merchant(name="Incoming ledger", slug="pt-incoming-ledger")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Incoming", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="incoming", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        evidence = dict(actual_provider_cost=Decimal("10"), actual_master_credit=Decimal("990"))
+        with pytest.raises(TransactionError, match="not confirmed"):
+            post_verified_incoming(db, **ids, **evidence)
+        confirm(db, ids, "funding", "incoming-fund", "incoming-provider-fund")
+        assert len(post_verified_incoming(db, **ids, **evidence)) == 2
+        assert trial(db, merchant.id) == {
+            "1000": (Decimal("1000"), Decimal("10")),
+            "2000": (Decimal("10"), Decimal("1000")),
+        }
+        confirm(db, ids, "onward", "incoming-pay", "incoming-provider-pay")
+        with pytest.raises(TransactionError, match="recipient credit"):
+            post_verified_incoming(db, **ids, **evidence, actual_recipient_credit=Decimal("970"))
+        for _ in range(2):
+            assert len(post_verified_incoming(db, **ids, **evidence,
+                actual_recipient_credit=Decimal("980"))) == 4
+        assert trial(db, merchant.id) == {
+            "1000": (Decimal("1000"), Decimal("990")),
+            "2000": (Decimal("1000"), Decimal("1000")),
+            "4000": (Decimal("0"), Decimal("10")),
+        }
+        assert db.scalar(select(func.count(JournalEntry.id))) == 4
