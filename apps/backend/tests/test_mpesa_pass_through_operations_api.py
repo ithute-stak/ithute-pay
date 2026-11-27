@@ -129,3 +129,19 @@ def test_merchant_user_is_denied_even_when_logged_in(client):
     assert client.get(ROOT + "/cases", headers=auth(token),
                       params={"merchant_id": "a"*36,
                               "application_id":"b"*36}).status_code == 403
+
+
+def test_revenue_summary_excludes_unfunded_quotes_and_requires_admin(client, admin_token):
+    m, app, _ = seed_operation("revenue")
+    params = {"merchant_id": m, "application_id": app}
+    assert client.get(ROOT + "/revenue/summary", params=params).status_code in (401, 403)
+    response = client.get(ROOT + "/revenue/summary", params=params, headers=auth(admin_token))
+    assert response.status_code == 200, response.text
+    data = response.json()
+    for key in ("posted_service_revenue", "posted_merchant_liability",
+                "posted_provider_clearing", "posted_tenant_provider_cost"):
+        assert data[key] == "0.00"
+    assert data["provider_wallet_balance_verified"] is False
+    assert client.get(ROOT + "/revenue/summary",
+        params={"merchant_id": "a"*36, "application_id": app},
+        headers=auth(admin_token)).status_code == 404

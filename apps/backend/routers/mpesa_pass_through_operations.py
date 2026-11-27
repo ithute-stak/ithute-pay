@@ -404,3 +404,70 @@ def monitoring_operator_summary(
     return operator_monitor_summary(
         db, merchant_id=merchant_id, application_id=application_id,
     )
+
+
+@router.get("/revenue/summary")
+def pass_through_revenue_summary(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    """Lifetime scoped accounting totals, not a provider wallet balance."""
+    from database.models import Application, JournalEntry, JournalLine, LedgerAccount
+    from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+    from services.ledger import money
+
+    app = db.get(Application, application_id)
+    if app is None or app.merchant_id != merchant_id:
+        raise HTTPException(status_code=404, detail="Application unavailable in scope")
+    rows = db.execute(
+        select(LedgerAccount.code, func.sum(JournalLine.debit), func.sum(JournalLine.credit))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(LedgerAccount, LedgerAccount.id == JournalLine.account_id)
+        .join(MpesaPassThroughTransaction, MpesaPassThroughTransaction.id == JournalEntry.source_id)
+        .where(
+            JournalEntry.source_type == "mpesa_pass_through",
+            JournalEntry.status == "posted",
+            JournalEntry.merchant_id == merchant_id,
+            JournalEntry.application_id == application_id,
+            JournalLine.merchant_id == merchant_id,
+            JournalLine.currency == "LSL",
+            LedgerAccount.merchant_id == merchant_id,
+            LedgerAccount.currency == "LSL",
+            MpesaPassThroughTransaction.merchant_id == merchant_id,
+            MpesaPassThroughTransaction.application_id == application_id,
+        ).group_by(LedgerAccount.code)
+    ).all()
+    balances = {code: money(credit - debit) for code, debit, credit in rows}
+    cost = db.scalar(
+        select(func.coalesce(func.sum(JournalLine.credit), 0))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(LedgerAccount, LedgerAccount.id == JournalLine.account_id)
+        .join(MpesaPassThroughTransaction, MpesaPassThroughTransaction.id == JournalEntry.source_id)
+        .where(
+            JournalEntry.source_type == "mpesa_pass_through",
+            JournalEntry.status == "posted",
+            JournalEntry.reference == "provider_cost:" + MpesaPassThroughTransaction.id,
+            JournalEntry.merchant_id == merchant_id,
+            JournalEntry.application_id == application_id,
+            JournalLine.merchant_id == merchant_id,
+            JournalLine.currency == "LSL",
+            LedgerAccount.merchant_id == merchant_id,
+            LedgerAccount.currency == "LSL",
+            LedgerAccount.code == "1000",
+            MpesaPassThroughTransaction.merchant_id == merchant_id,
+            MpesaPassThroughTransaction.application_id == application_id,
+        )
+    )
+    return {
+        "merchant_id": merchant_id, "application_id": application_id,
+        "currency": "LSL", "period": "lifetime",
+        "posted_service_revenue": str(money(balances.get("4000", 0))),
+        "posted_merchant_liability": str(money(balances.get("2000", 0))),
+        "posted_provider_clearing": str(money(-balances.get("1000", 0))),
+        "posted_tenant_provider_cost": str(money(cost or 0)),
+        "provider_wallet_balance_verified": False,
+        "live_pass_through_enabled": False,
+    }
