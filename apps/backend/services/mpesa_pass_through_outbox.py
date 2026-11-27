@@ -258,3 +258,48 @@ def claim_sandbox_simulation(db: Session, *, merchant_id: str, application_id: s
     ).values(state="needs_reconciliation"))
     db.flush()
     return result.rowcount == 1
+
+
+def describe_provider_execution(db: Session, *, merchant_id: str, application_id: str,
+                                transaction_id: str, leg: str) -> dict:
+    """Build a non-executable adapter plan from persisted reservation identity.
+
+    This is a wire-operation classification only; never call the payment
+    adapter from its output. Provider approval and fresh account authorization
+    are required before adding a real sender.
+    """
+    from database.models import Application
+    from database.models.mpesa_pass_through_identity import MpesaPassThroughLegIdentity
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Execution preview requires authorized test application")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for reversal investigation")
+    if leg not in {"funding", "onward"}:
+        raise TransactionError("Refund execution requires separate certification")
+    kind = (row.quote_snapshot or {}).get("transaction_type")
+    methods = {("c2b", "funding"): "collect", ("c2b", "onward"): "transfer",
+               ("b2c", "funding"): "transfer", ("b2c", "onward"): "payout",
+               ("b2b", "funding"): "transfer", ("b2b", "onward"): "transfer"}
+    method = methods.get((kind, leg))
+    if method is None or row.direction != ("incoming" if kind == "c2b" else "outgoing"):
+        raise TransactionError("Unsupported commercial movement")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg))
+    if (intent is None or intent.provider != "mpesa" or intent.state != "reserved"
+            or getattr(row, leg + "_status") != "processing"
+            or getattr(row, leg + "_reference") != intent.reference
+            or intent.amount != (row.funding_amount if leg == "funding" else row.onward_amount)):
+        raise TransactionError("Matching unclaimed reservation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    if binding is None:
+        raise TransactionError("Immutable party binding required")
+    return {"adapter_method": method, "reference": intent.reference,
+            "amount": format(intent.amount, ".2f"), "currency": intent.currency,
+            "dispatch_authorized": False, "provider_called": False}

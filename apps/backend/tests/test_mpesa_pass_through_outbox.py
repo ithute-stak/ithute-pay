@@ -244,3 +244,20 @@ def test_live_worker_does_not_report_unverified_completion():
         assert result["action"] == "investigate_unverified_live_settlement"
         assert result["leg"] == "funding"
         assert result["dispatch_authorized"] is False
+
+
+def test_execution_preview_classifies_funding_without_dispatch():
+    from services.mpesa_pass_through_outbox import describe_provider_execution, claim_sandbox_simulation
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "execution-preview")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **args, reference="preview-f")
+        bind_leg_identity(db, **args, source_party="YYYY", destination_party="XXXX")
+        plan = describe_provider_execution(db, **args)
+        assert plan == {"adapter_method": "transfer", "reference": "preview-f",
+                        "amount": "1020.00", "currency": "LSL",
+                        "dispatch_authorized": False, "provider_called": False}
+        assert claim_sandbox_simulation(db, **args, reference="preview-f")
+        with pytest.raises(TransactionError, match="unclaimed"):
+            describe_provider_execution(db, **args)
