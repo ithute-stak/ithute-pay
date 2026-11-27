@@ -179,3 +179,30 @@ async def test_sandbox_reconciliation_worker_queries_without_posting():
         with pytest.raises(TransactionError, match="sandbox"):
             await run()
         assert client.calls == 1
+
+
+def test_simulation_claim_is_one_way_and_durable():
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "simulation-claim")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx,
+                    leg="funding", reference="claim-f")
+        reserve_operation(db, **args)
+        with pytest.raises(TransactionError, match="binding"):
+            claim_sandbox_simulation(db, **args)
+        bind_leg_identity(db, merchant_id=merchant, application_id=app,
+                          transaction_id=tx, leg="funding", source_party="YYYY", destination_party="XXXX")
+        assert claim_sandbox_simulation(db, **args) is True
+        db.commit()
+    with SessionLocal() as db:
+        assert claim_sandbox_simulation(db, **args) is False
+        intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+            MpesaPassThroughOperationIntent.transaction_id == tx))
+        assert intent.state == "needs_reconciliation"
+        assert intent.submitted_at is None
+        assert intent.provider_operation_id is None
+        db.get(Application, app).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            claim_sandbox_simulation(db, **args)

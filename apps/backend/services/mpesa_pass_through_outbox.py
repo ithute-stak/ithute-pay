@@ -188,3 +188,55 @@ async def run_sandbox_reconciliation_check(db: Session, *, merchant_id: str,
             "identity_evidence_sufficient": result.sufficient_evidence,
             "missing_fields": result.missing_fields,
             "accounting_authorized": False}
+
+
+def claim_sandbox_simulation(db: Session, *, merchant_id: str, application_id: str,
+                             transaction_id: str, leg: str, reference: str) -> bool:
+    """One-way claim for a sandbox simulation; never grants dispatch permission.
+
+    Commit before starting any simulation. A committed claim survives a crash
+    and must be reconciled, not reset or treated as permission to send money.
+    No provider calls, submitted timestamps or accounting changes occur here.
+    """
+    from database.models import Application
+    from database.models.mpesa_pass_through_identity import MpesaPassThroughLegIdentity
+    from sqlalchemy import update
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id, for_update=True)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Simulation claim requires authorized test application")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for reversal investigation")
+    if leg not in {"funding", "onward", "refund"}:
+        raise TransactionError("Unknown movement")
+    if getattr(row, leg + "_status") != "processing" or getattr(row, leg + "_reference") != reference:
+        raise TransactionError("Matching processing movement required")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg,
+        MpesaPassThroughOperationIntent.reference == reference,
+        MpesaPassThroughOperationIntent.provider == "mpesa",
+    ).with_for_update())
+    if intent is None:
+        raise TransactionError("Matching reservation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    if binding is None:
+        raise TransactionError("Immutable party binding required")
+    if leg != "funding":
+        saved = (row.quote_snapshot or {}).get("verified_provider_costs", {}).get("funding")
+        if (row.funding_status != "succeeded" or not saved or
+                saved.get("provider_id") != row.funding_provider_id or
+                saved.get("movement_digest") != row.funding_evidence_hash or not saved.get("cost_digest")):
+            raise TransactionError("Verified funding cost evidence required")
+    result = db.execute(update(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.id == intent.id,
+        MpesaPassThroughOperationIntent.state == "reserved",
+        MpesaPassThroughOperationIntent.submitted_at.is_(None),
+        MpesaPassThroughOperationIntent.provider_operation_id.is_(None),
+    ).values(state="needs_reconciliation"))
+    db.flush()
+    return result.rowcount == 1
