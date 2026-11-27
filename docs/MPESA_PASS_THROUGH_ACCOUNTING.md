@@ -1,52 +1,61 @@
-# Phase 6 — double-entry posting for verified pass-through outgoing flows
+# Pass-through commercial accounting and release gates
 
-This module adds an *internal* accounting adapter over the existing
-`JournalEntry`, `JournalLine`, `LedgerAccount` and compatibility
-`LedgerEntry` models. It does not create a new ledger, initiate an M-Pesa
-transfer, register an API route, or enable an outbox consumer.
+## Approved design assumptions (not provider certification)
 
-Only the following accounting contract is presently supported:
+Default IthutePay rates: C2B 1%, B2C/B2B 2%; approved merchant-specific agreements override defaults. Incoming provider deduction assumed 1%; intermediate transfer charges must be confirmed separately. Existing direct M-Pesa remains independent.
 
-- **Outgoing LSL**, from the tenant's own merchant to IthutePay XXXX.
-- **No provider costs** on either movement and fee payer = tenant.
-- Tenant fee comes from the immutable, approved, tenant-specific quote snapshot.
-- Provider evidence for each leg has already been verified independently
-  and persisted to the pass-through transaction store.
-- Each leg has a corresponding, same-tenant, reserved outbox operation intent.
+| Example | Sender debit | Recipient credit | Platform fee |
+|---|---:|---:|---:|
+| C2B | M1,000 | M980 | M10 |
+| B2C | M1,020 | M1,000 | M20 |
+| B2B | M1,020 | M1,000 | M20 |
 
-## Journal for example M1,000 disbursement and M10 fee
+C2B assumes M10 deducted on funding and zero onward charge; outgoing assumes no additional provider cost on either leg. These are examples, not verified wallet balances.
 
-| Confirmed event | Debit | Credit | Amount |
-|---|---|---|---|
-| Funding YYYY -> XXXX | Provider clearing | Merchant payable | M1,010 |
-| B2C XXXX -> client | Merchant payable | Provider clearing | M1,000 |
-| Earned fee (after B2C success) | Merchant payable | Gateway fee revenue | M10 |
+## Journal contracts
 
-On refund, instead of paying the client, the approved return of the full
-M1,010 is recorded as debit merchant payable / credit provider clearing.
-Unconfirmed movements never become journal postings. The fee is not recognized
-on timeout, failure, refund, or unknown beneficiary status.
+Outgoing: confirmed funding Dr clearing / Cr payable M1,020; confirmed payout Dr payable / Cr clearing M1,000; earned fee Dr payable / Cr revenue M20. A confirmed eligible full refund instead debits payable and credits clearing M1,020, with no fee earned.
 
-## Operational rules
+Incoming: confirmed gross funding Dr clearing / Cr payable M1,000; verified provider deduction Dr payable / Cr clearing M10; confirmed onward Dr payable / Cr clearing M980; earned fee Dr payable / Cr revenue M10. No fee before onward success. Incoming refunds remain blocked; fee recovery capacity preview is not authorization.
 
-- Call `post_verified_outgoing` **only from an internal evidence-verified
-  service**, never from client-provided success flags or a public endpoint.
-- Commit the verified provider result and all associated journal entries in
-  the **same SQLAlchemy database transaction**. Roll back all on failure.
-- The journal entry's existing unique source-reference constraint plus strict
-  line comparison protects against duplicate posting and divergent replays.
-- The repository's `post_journal` controls balanced debits/credits; every
-  resulting line must be reconciled to actual provider evidence.
-- The existing M-Pesa and Golink provider paths are unchanged.
+Use only trusted internal reconciliation, matching reserved operation, immutable parties, provider identity, currency, amount and actual fee/net credit evidence. Live successful legs require cost evidence. Commit evidence and journals atomically. Unknown outcomes require reconciliation, never blind retry. Accounting totals are not proof of provider float.
 
-## Not implemented / release blockers
+## Reversals
 
-- Incoming collection and B2B settlement ledger policies.
-- Non-zero M-Pesa provider-cost allocation or provider fee reversals.
-- Independently authenticated provider callbacks/status queries.
-- Dispatch workers, ledger reconciliation against Vodacom statements, SMS.
-- Production deployment and certified live money movement.
+An authenticated reversal observation matching the original confirmed receipt creates an investigation hold. Original journals remain intact. New reservations, reconciliation and direct accounting replay are blocked. Do not silently rewrite balances, post a compensating entry or treat reversal as a refund. Before implementing financial adjustments obtain the original and reversal identifiers, actual credited/debited amounts, fee recovery, final status, beneficiary impact, loss-bearing party and approved adjustment rules. Confirm no duplicate recovery or later conflicting payout. Independent review must approve any eventual compensating journal; hold release is not currently implemented.
 
-The provider clearing journal is an *accounting claim*, not proof that XXXX
-has sufficient available float. Final financial sign-off and Lesotho payment
-provider/regulatory authorization are separate requirements.
+## Release gates (not satisfied by green CI alone)
+
+- [ ] Confirm Vodacom Lesotho authorizes master-shortcode pass-through, merchant-specific settlement and automatic fee retention; obtain applicable legal/regulatory approval.
+- [ ] Confirm actual C2B, funding B2B, onward B2B/B2C, refund and reversal tariffs, including sender-side charges and nonrefundable deductions.
+- [ ] Obtain authenticated sandbox query and settlement evidence with exact field mappings for original reference, parties, currency, amount, final status, provider ID, actual net credit, provider costs and source debit.
+- [ ] Certify provider evidence retrieval and credential scope; do not infer missing values from quote or response code.
+- [ ] Certify refund and reversal adjustment rules, independent review, audit trail and hold release.
+- [ ] Implement and certify durable dispatch and reconciliation worker, unknown-outcome recovery, idempotency and environment isolation before live execution.
+- [ ] Run isolated end-to-end provider certification and reconcile against statements; confirm no duplicate money movements and correct fee retention.
+- [ ] Verify database migrations and restore drill, authorization, reporting isolation and direct M-Pesa regression on the exact release.
+- [ ] Obtain approved deployment and rollback plan, financial/security sign-off and explicit activation approval.
+
+Keep live pass-through disabled. A successful CI run establishes only the tests it executed. The direct M-Pesa integration is not part of this activation.
+
+
+## Provider certification handoff
+
+Use a disposable test application and explicitly approved sandbox accounts. Do not use production credentials, actual customer numbers or real funds for these tests. Never store API keys, session tokens or unredacted customer information in CI artifacts.
+
+| Test | Expected sender debit | Expected recipient credit | Expected deduction |
+|---|---:|---:|---:|
+| C2B customer to gateway | 1000.00 | 990.00 | 10.00 |
+| C2B gateway to merchant | 980.00 | 980.00 | 0.00 |
+| B2C merchant to gateway | 1020.00 | 1020.00 | 0.00 |
+| B2C gateway to customer | 1000.00 | 1000.00 | 0.00 |
+| B2B merchant to gateway | 1020.00 | 1020.00 | 0.00 |
+| B2B gateway to recipient merchant | 1000.00 | 1000.00 | 0.00 |
+
+These amounts are hypothetical certification targets, not observed provider results. If the provider charges differently, stop and review commercial agreements and allocation rules before continuing.
+
+For each operation capture the original reference, provider transaction identifier, authenticated account scope, final status, currency, source debit, destination credit, deducted fee and statement reconciliation reference. Preserve redacted evidence with the exact release commit and independent reviewer approval. A generic accepted response is insufficient; missing evidence is a blocker, not zero cost. Sender debit evidence is mandatory for live reconciliation, live journal posting and onward reservation. Existing direct M-Pesa must remain independent.
+
+Offline CI exercises request serialization through the existing client with an overridden network transport, persistent worker claims, duplicate confirmation and PostgreSQL races. It does not perform a real sandbox transaction. The adapter argument builder returns dispatch_authorized=false. Reserved or ambiguous operations must only be queried, never automatically submitted. No actual pass-through sender or public execution endpoint is enabled. Reversal holds remain manual pending verified compensation rules.
+
+Release decision: the pricing, preview and reporting foundation may be considered separately for a disabled-feature release after exact-commit CI and review. Live activation is a separate decision and must not be implied by merging or deploying the foundation.

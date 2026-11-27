@@ -22,6 +22,7 @@ router = APIRouter(prefix="/merchant/mpesa-pass-through", tags=["M-Pesa Pass-Thr
 
 class PassThroughQuoteRequest(BaseModel):
     direction: str = Field(pattern="^(incoming|outgoing)$")
+    transaction_type: str | None = Field(default=None, pattern="^(c2b|b2c|b2b)$")
     amount: Decimal = Field(gt=0, decimal_places=2, max_digits=18)
     currency: str = Field(default="LSL", pattern="^LSL$")
 
@@ -45,11 +46,11 @@ def preview_pass_through_quote(
         MerchantCommercialAgreement.currency == payload.currency,
     ).order_by(MerchantCommercialAgreement.version.desc()))
     if agreement is None:
-        # Fail closed; the 1% tariff is a default configuration, never an
+        # Fail closed; the default tariff is a default configuration, never an
         # implicit authorization for a tenant without an approved agreement.
         raise HTTPException(status_code=409, detail="Approved tenant pricing agreement required")
     try:
-        quoted = quote_from_agreement(ctx.merchant.id, payload.direction, payload.amount, agreement)
+        quoted = quote_from_agreement(ctx.merchant.id, payload.direction, payload.amount, agreement, transaction_type=payload.transaction_type)
     except (ValueError, PermissionError) as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     return quoted.payload()

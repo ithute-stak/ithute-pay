@@ -16,7 +16,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
-from database.models import JournalEntry, JournalLine, LedgerAccount
+from database.models import Application, JournalEntry, JournalLine, LedgerAccount
+from database.models.mpesa_pass_through_identity import MpesaPassThroughProviderReceipt
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
 from services.ledger import ZERO, money, post_journal
 from services.mpesa_pass_through_lifecycle import LegStatus, TransactionError
@@ -50,6 +51,25 @@ def _require_confirmed_leg(db: Session, row, name: str) -> None:
     ))
     if intent is None:
         raise TransactionError(name + " has no matching reserved operation")
+    app = db.get(Application, row.application_id)
+    if app is None or app.merchant_id != row.merchant_id or app.environment not in {"test", "live"}:
+        raise TransactionError("Invalid accounting application scope")
+    if app.environment == "live":
+        saved = (row.quote_snapshot or {}).get("verified_provider_costs", {}).get(name)
+        receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+            MpesaPassThroughProviderReceipt.intent_id == intent.id))
+        if (not saved or not saved.get("cost_digest") or saved.get("source_debit") is None
+                or saved.get("provider_id") != getattr(row, name + "_provider_id")
+                or saved.get("movement_digest") != getattr(row, name + "_evidence_hash")
+                or receipt is None or receipt.provider != "mpesa"
+                or receipt.provider_transaction_id != saved.get("provider_id")
+                or receipt.canonical_evidence_hash != saved.get("movement_digest")):
+            raise TransactionError("Live accounting requires matched settlement receipt and source debit")
+        expected_fee = row.provider_cost if row.direction == "incoming" and name == "funding" else ZERO
+        if (saved.get("source_debit") != format(intent.amount, ".2f")
+                or saved.get("fee") != format(expected_fee, ".2f")
+                or saved.get("net") != format(intent.amount - expected_fee, ".2f")):
+            raise TransactionError("Live accounting settlement amounts do not reconcile")
 
 
 def _existing_or_post(
@@ -104,10 +124,10 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
                            transaction_id: str) -> list[JournalEntry]:
     """Post only evidenced movements in the caller's existing SQL transaction.
 
-    Funding: Dr provider clearing 1010 / Cr merchant liability 1010.
+    Funding: Dr provider clearing 1020 / Cr merchant liability 1020.
     Payout:  Dr merchant liability 1000 / Cr provider clearing 1000.
-    Fee:     Dr merchant liability 10 / Cr platform fee revenue 10.
-    Refund:  Dr merchant liability 1010 / Cr provider clearing 1010.
+    Fee:     Dr merchant liability 20 / Cr platform fee revenue 20.
+    Refund:  Dr merchant liability 1020 / Cr provider clearing 1020.
 
     An unconfirmed or ambiguous payout posts NO payout or revenue.
     Caller is responsible for rollback if this function raises.
@@ -116,6 +136,8 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
                      record_id=transaction_id, for_update=True)
     if row is None:
         raise TransactionError("No transaction in authenticated tenant scope")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Accounting held for provider reversal investigation")
     _require_outgoing(row)
     tx = load_lifecycle(row)
     posted = []
@@ -156,3 +178,118 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
             ("provider_clearing", ZERO, gross, "Refund sent to original funding merchant"),
         ]))
     return posted
+
+def preview_incoming_allocation(quote, *, actual_provider_cost: Decimal,
+                                actual_master_credit: Decimal) -> dict[str, Decimal]:
+    """Non-posting preview using independently reconciled funding evidence.
+
+    This does not authenticate evidence, certify onward transfer charges, or
+    permit incoming refunds or ledger posting. Mismatches require review.
+    """
+    if quote.direction != "incoming" or quote.fee_payer != "tenant":
+        raise TransactionError("Only tenant-paid incoming allocation is supported")
+    for value in (actual_provider_cost, actual_master_credit):
+        if not isinstance(value, Decimal) or not value.is_finite() or value < ZERO or value != money(value):
+            raise TransactionError("Invalid actual provider amount")
+    if actual_provider_cost != quote.provider_cost:
+        raise TransactionError("Actual provider cost differs from approved quote")
+    if quote.funding_amount != quote.principal or actual_master_credit != quote.principal - actual_provider_cost:
+        raise TransactionError("Actual master credit does not reconcile")
+    if quote.ithutepay_fee < ZERO or quote.onward_amount <= ZERO:
+        raise TransactionError("Invalid incoming allocation")
+    if actual_master_credit != quote.onward_amount + quote.ithutepay_fee:
+        raise TransactionError("Merchant proceeds and platform fee do not reconcile")
+    return {
+        "gross_customer_payment": quote.principal,
+        "provider_cost": actual_provider_cost,
+        "master_net_credit": actual_master_credit,
+        "merchant_onward_amount": quote.onward_amount,
+        "potential_platform_fee": quote.ithutepay_fee,
+        "recognized_revenue": ZERO,
+    }
+
+
+def post_verified_incoming(db: Session, *, merchant_id: str, application_id: str,
+                           transaction_id: str, actual_provider_cost: Decimal,
+                           actual_master_credit: Decimal,
+                           actual_recipient_credit: Decimal | None = None) -> list[JournalEntry]:
+    """Internal accounting foundation; not connected to live reconciliation.
+
+    Trusted caller must independently authenticate net credit and provider cost
+    evidence for the original funding, and actual recipient credit for onward
+    settlement. Assumes tenant-borne funding cost and no additional onward
+    charge. Incoming refund policy is intentionally not supported.
+    Caller must roll back on any exception.
+    """
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id, for_update=True)
+    if row is None or row.currency != "LSL":
+        raise TransactionError("No LSL transaction in authenticated tenant scope")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Accounting held for provider reversal investigation")
+    tx = load_lifecycle(row)
+    allocation = preview_incoming_allocation(tx.quote, actual_provider_cost=actual_provider_cost,
+                                             actual_master_credit=actual_master_credit)
+    if tx.refund.status != LegStatus.NOT_STARTED:
+        raise TransactionError("Incoming refund accounting requires separate approval")
+    if tx.funding.status != LegStatus.SUCCEEDED:
+        raise TransactionError("Incoming funding is not confirmed")
+    _require_confirmed_leg(db, row, "funding")
+    if tx.onward.status == LegStatus.SUCCEEDED:
+        _require_confirmed_leg(db, row, "onward")
+        if (not isinstance(actual_recipient_credit, Decimal) or
+                not actual_recipient_credit.is_finite() or
+                actual_recipient_credit != allocation["merchant_onward_amount"]):
+            raise TransactionError("Actual recipient credit differs from approved allocation")
+    elif actual_recipient_credit is not None:
+        raise TransactionError("Recipient credit supplied without confirmed onward movement")
+
+    # Record gross funding and the tenant-borne provider deduction separately.
+    # Provider cost is not platform revenue or platform expense in this model.
+    gross = allocation["gross_customer_payment"]
+    cost = allocation["provider_cost"]
+    entries = [_existing_or_post(db, row=row, event="funding", lines=[
+        ("provider_clearing", gross, ZERO, "Gross customer payment confirmed"),
+        ("merchant_payable", ZERO, gross, "Gross merchant entitlement"),
+    ])]
+    if cost > ZERO:
+        entries.append(_existing_or_post(db, row=row, event="provider_cost", lines=[
+            ("merchant_payable", cost, ZERO, "Tenant-borne provider fee"),
+            ("provider_clearing", ZERO, cost, "Verified provider deduction"),
+        ]))
+    if tx.onward.status == LegStatus.SUCCEEDED:
+        amount = allocation["merchant_onward_amount"]
+        entries.append(_existing_or_post(db, row=row, event="onward", lines=[
+            ("merchant_payable", amount, ZERO, "Merchant settlement confirmed"),
+            ("provider_clearing", ZERO, amount, "Verified merchant credit"),
+        ]))
+        fee = allocation["potential_platform_fee"]
+        if fee > ZERO:
+            entries.append(_existing_or_post(db, row=row, event="fee", lines=[
+                ("merchant_payable", fee, ZERO, "Earn fee after confirmed settlement"),
+                ("gateway_fee_revenue", ZERO, fee, "Agreed incoming service fee"),
+            ]))
+    return entries
+
+
+def preview_incoming_refund_capacity(quote, *, actual_provider_cost: Decimal,
+                                     actual_master_credit: Decimal,
+                                     recovered_provider_fee: Decimal,
+                                     refund_transfer_cost: Decimal) -> dict[str, Decimal | bool]:
+    """Non-posting capacity assessment, not authority to issue any refund.
+
+    Recovered fee must be cash already credited, not an expected reversal.
+    External evidence and responsibility for any shortfall remain mandatory.
+    """
+    allocation = preview_incoming_allocation(quote,
+        actual_provider_cost=actual_provider_cost, actual_master_credit=actual_master_credit)
+    for amount in (recovered_provider_fee, refund_transfer_cost):
+        if not isinstance(amount, Decimal) or not amount.is_finite() or amount < ZERO or amount != money(amount):
+            raise TransactionError("Invalid refund cost evidence")
+    if recovered_provider_fee > actual_provider_cost:
+        raise TransactionError("Recovered fee exceeds original provider deduction")
+    available = allocation["master_net_credit"] + recovered_provider_fee
+    required = allocation["gross_customer_payment"] + refund_transfer_cost
+    return {"available_funds": available, "required_funds": required,
+            "shortfall": max(ZERO, required - available),
+            "recognized_revenue": ZERO, "refund_execution_authorized": False}

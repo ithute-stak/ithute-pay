@@ -21,7 +21,7 @@ from services.mpesa_pass_through_reconciliation import reconcile_authenticated_q
 from services.mpesa_pass_through_store import create_quote_record
 
 
-def observation(*, ref="fund-a", amount="1010.00", source="YYYY",
+def observation(*, ref="fund-a", amount="1020.00", source="YYYY",
                 destination="XXXX", status="succeeded", txid="vodacom-f-1",
                 currency="LSL", reversed=False):
     return ProviderQueryObservation(
@@ -68,13 +68,13 @@ def payout(db, ids, ref="payout-a", txid="vodacom-p-1", status="succeeded"):
 
 
 @pytest.mark.parametrize("change", [
-    {"ref": "forged"}, {"amount": "1010.01"},
+    {"ref": "forged"}, {"amount": "1020.01"},
     {"currency": "ZAR"}, {"source": "OTHER"}, {"destination": "OTHER"},
     {"status": "not-a-status"}, {"reversed": True},
     {"status": "succeeded", "txid": None},
 ])
 def test_reject_mismatched_provider_query(change):
-    expected = ExpectedMovement("fund-a", Decimal("1010"), "LSL", "YYYY", "XXXX")
+    expected = ExpectedMovement("fund-a", Decimal("1020"), "LSL", "YYYY", "XXXX")
     with pytest.raises(TransactionError):
         validate_provider_query(expected, observation(**change))
 
@@ -170,7 +170,286 @@ def test_wrong_amount_never_posts_a_fee():
 
 
 def test_observation_requires_finite_two_decimal_amount():
-    expected = ExpectedMovement("fund-a", Decimal("1010"), "LSL", "YYYY", "XXXX")
-    for amount in ("NaN", "Inf", "1010.001", "-1010", ""):
+    expected = ExpectedMovement("fund-a", Decimal("1020"), "LSL", "YYYY", "XXXX")
+    for amount in ("NaN", "Inf", "1020.001", "-1020", ""):
         with pytest.raises(TransactionError):
             validate_provider_query(expected, observation(amount=amount))
+
+
+def test_b2b_full_beneficiary_amount_and_single_fee():
+    from database.models import JournalLine, LedgerAccount
+    with SessionLocal() as db:
+        merchant = Merchant(name="B2B reconciliation", slug="pt-b2b-recon")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="B2B", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="outgoing", transaction_type="b2b",
+                  principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="b2b-recon", request={"amount": "1000"}, quote=q,
+            b2b_parties={"sender": "YYYY", "gateway": "XXXX", "recipient": "ZZZZ",
+                         "recipient_merchant_id": "synthetic-recipient", "environment": "sandbox"})
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        funding(db, ids)
+        reserve_operation(db, **ids, leg="onward", reference="b2b-pay")
+        with pytest.raises(TransactionError):
+            bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="OTHER")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="ZZZZ")
+        with pytest.raises(TransactionError):
+            reconcile_authenticated_query(db, **ids, leg="onward", source_shortcode="XXXX",
+                destination="ZZZZ", observation=observation(ref="b2b-pay", amount="980", source="XXXX",
+                destination="ZZZZ", txid="b2b-paid"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        for _ in range(2):
+            assert reconcile_authenticated_query(db, **ids, leg="onward", source_shortcode="XXXX",
+                destination="ZZZZ", observation=observation(ref="b2b-pay", amount="1000",
+                source="XXXX", destination="ZZZZ", txid="b2b-paid")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
+        revenue = db.scalar(select(func.sum(JournalLine.credit))
+            .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
+            .where(LedgerAccount.merchant_id == merchant.id, LedgerAccount.code == "4000"))
+        assert revenue == Decimal("20.00")
+
+
+def test_authenticated_provider_cost_contract():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation, validate_provider_cost
+    expected = ExpectedMovement("fund-a", Decimal("1000"), "LSL", "YYYY", "XXXX")
+    movement = validate_provider_query(expected, observation(amount="1000"))
+    actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1000", "10", "990")
+    verified = validate_provider_cost(expected, movement, actual)
+    assert verified.deducted_fee == Decimal("10")
+    assert verified.net_credit == Decimal("990")
+
+
+@pytest.mark.parametrize("change", [
+    {"deducted_fee": ""}, {"deducted_fee": "NaN"}, {"net_credit": "1000"},
+    {"deducted_fee": "-1"}, {"net_credit": "990.001"},
+    {"transaction_id": "other"}, {"destination": "other"},
+    {"currency": "ZAR"}, {"gross_amount": "999"},
+])
+def test_provider_cost_contract_rejects_bad_evidence(change):
+    from dataclasses import replace
+    from services.mpesa_pass_through_evidence import ProviderCostObservation, validate_provider_cost
+    expected = ExpectedMovement("fund-a", Decimal("1000"), "LSL", "YYYY", "XXXX")
+    movement = validate_provider_query(expected, observation(amount="1000"))
+    actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1000", "10", "990")
+    with pytest.raises(TransactionError):
+        validate_provider_cost(expected, movement, replace(actual, **change))
+
+
+def test_incoming_reconciliation_requires_and_persists_actual_cost_evidence():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        merchant = Merchant(name="C2B evidence", slug="pt-c2b-cost-recon")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="C2B", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="c2b-cost", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        reserve_operation(db, **ids, leg="funding", reference="c2b-fund")
+        bind_leg_identity(db, **ids, leg="funding", source_party="CLIENT", destination_party="XXXX")
+        fund = dict(**ids, leg="funding", source_shortcode="CLIENT", destination="XXXX",
+            observation=observation(ref="c2b-fund", amount="1000", source="CLIENT", txid="c2b-f"))
+        with pytest.raises(TransactionError, match="cost evidence"):
+            reconcile_authenticated_query(db, **fund)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        assert reconcile_authenticated_query(db, **fund,
+            cost_observation=ProviderCostObservation("mpesa","c2b-f","LSL","XXXX","1000","10","990")) == "succeeded"
+        assert reconcile_authenticated_query(db, **fund,
+            cost_observation=ProviderCostObservation("mpesa","c2b-f","LSL","XXXX","1000.00","10.00","990.00")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 2
+        assert row.quote_snapshot["verified_provider_costs"]["funding"]["net"] == "990.00"
+        reserve_operation(db, **ids, leg="onward", reference="c2b-pay")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="YYYY")
+        pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="YYYY",
+            observation=observation(ref="c2b-pay", amount="980", source="XXXX", destination="YYYY", txid="c2b-p"))
+        with pytest.raises(TransactionError, match="onward provider"):
+            reconcile_authenticated_query(db, **pay,
+                cost_observation=ProviderCostObservation("mpesa","c2b-p","LSL","YYYY","980","10","970"))
+        for _ in range(2):
+            assert reconcile_authenticated_query(db, **pay,
+                cost_observation=ProviderCostObservation("mpesa","c2b-p","LSL","YYYY","980","0","980")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 4
+        db.commit()
+
+
+def test_outgoing_cost_evidence_rejects_short_credit_before_journal():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "out-cost")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        args = dict(**ids, leg="funding", source_shortcode="YYYY", destination="XXXX",
+                    observation=observation())
+        with pytest.raises(TransactionError, match="zero-cost"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "10", "1010"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020")
+        assert reconcile_authenticated_query(db, **args, cost_observation=actual) == "succeeded"
+        with pytest.raises(TransactionError, match="required on replay"):
+            reconcile_authenticated_query(db, **args)
+        assert reconcile_authenticated_query(db, **args, cost_observation=actual) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+
+
+def test_live_outgoing_requires_actual_cost_before_any_posting():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "live-cost-required")
+        app = db.get(Application, ids["application_id"])
+        app.environment = "live"
+        db.flush()
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        args = dict(**ids, leg="funding", source_shortcode="YYYY", destination="XXXX",
+                    observation=observation())
+        with pytest.raises(TransactionError, match="Live settlement requires"):
+            reconcile_authenticated_query(db, **args)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        with pytest.raises(TransactionError, match="source debit evidence"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020"))
+        with pytest.raises(TransactionError, match="sender-side"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020", "1030"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        assert reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+            "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020", "1020")) == "succeeded"
+        reserve_operation(db, **ids, leg="onward", reference="live-pay")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="CLIENT")
+        pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="CLIENT",
+                   observation=observation(ref="live-pay", amount="1000", source="XXXX",
+                                           destination="CLIENT", txid="live-p"))
+        with pytest.raises(TransactionError, match="Live settlement requires"):
+            reconcile_authenticated_query(db, **pay)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        with pytest.raises(TransactionError, match="Reversed transfer"):
+            reconcile_authenticated_query(db, **{**pay, "observation": observation(
+                ref="live-pay", amount="1000", source="XXXX", destination="CLIENT",
+                txid="live-p", reversed=True)})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        assert reconcile_authenticated_query(db, **pay, cost_observation=ProviderCostObservation(
+            "mpesa", "live-p", "LSL", "CLIENT", "1000", "0", "1000", "1000")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
+
+
+def test_authenticated_reversal_quarantines_funding_without_rewriting_journals():
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "reversal-hold")
+        funding(db, ids)
+        args = dict(**ids, leg="funding")
+        with pytest.raises(TransactionError):
+            quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True, txid="other"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        hold = quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True))
+        assert hold["status"] == "investigation_required"
+        assert quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True)) == hold
+        for leg in ("onward", "refund"):
+            with pytest.raises(TransactionError, match="reversal investigation"):
+                reserve_operation(db, **ids, leg=leg, reference="hold-" + leg)
+        with pytest.raises(TransactionError, match="reversal investigation"):
+            reconcile_authenticated_query(db, **args, source_shortcode="YYYY", destination="XXXX",
+                                          observation=observation())
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()
+
+
+def test_reversal_hold_blocks_direct_accounting_replay():
+    from services.mpesa_pass_through_accounting import post_verified_outgoing
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "reversal-accounting-hold")
+        funding(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        with pytest.raises(TransactionError, match="Accounting held"):
+            post_verified_outgoing(db, **ids)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()
+
+
+@pytest.mark.parametrize("kind,gross,cost,credit,payout_amount,fee", [
+    ("c2b", "1000", "10", "990", "980", "10"),
+    ("b2c", "1020", "0", "1020", "1000", "20"),
+    ("b2b", "1020", "0", "1020", "1000", "20"),
+])
+def test_offline_worker_full_journey(kind, gross, cost, credit, payout_amount, fee):
+    """Synthetic evidence only; no provider calls or real funds."""
+    from database.models import JournalLine, LedgerAccount
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation, plan_next_operation
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        merchant = Merchant(name="Worker " + kind, slug="pt-worker-" + kind)
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name=kind, environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming" if kind == "c2b" else "outgoing",
+                  transaction_type=kind, principal="1000", approved=True)
+        sender = "CLIENT" if kind == "c2b" else "YYYY"
+        recipient = "CLIENT" if kind == "b2c" else "ZZZZ"
+        parties = {"sender": sender, "gateway": "XXXX", "recipient": recipient,
+                   "recipient_merchant_id": "synthetic-recipient", "environment": "sandbox"} if kind == "b2b" else None
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="worker-" + kind, request={"amount": "1000"}, quote=q, b2b_parties=parties)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        db.commit()
+
+    def balance(db, code):
+        return db.scalar(select(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
+            .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
+            .where(LedgerAccount.merchant_id == ids["merchant_id"], LedgerAccount.code == code))
+
+    for leg, source, destination, amount, deduction, net in (
+        ("funding", sender, "XXXX", gross, cost, credit),
+        ("onward", "XXXX", recipient, payout_amount, "0", payout_amount),
+    ):
+        reference = kind + "-" + leg
+        provider_id = "synthetic-" + reference
+        with SessionLocal() as db:
+            assert plan_next_operation(db, **ids)["action"] == (
+                "await_funding_authorization" if leg == "funding" else "await_onward_authorization")
+            reserve_operation(db, **ids, leg=leg, reference=reference)
+            bind_leg_identity(db, **ids, leg=leg, source_party=source, destination_party=destination)
+            assert claim_sandbox_simulation(db, **ids, leg=leg, reference=reference)
+            db.commit()
+        # Simulate restart between claim and observation; never claim twice.
+        with SessionLocal() as db:
+            assert not claim_sandbox_simulation(db, **ids, leg=leg, reference=reference)
+            assert plan_next_operation(db, **ids)["action"] == "query_existing_reference"
+            args = dict(**ids, leg=leg, source_shortcode=source, destination=destination,
+                observation=observation(ref=reference, amount=amount, source=source,
+                                        destination=destination, txid=provider_id),
+                cost_observation=ProviderCostObservation("mpesa", provider_id, "LSL",
+                    destination, amount, deduction, net))
+            assert reconcile_authenticated_query(db, **args) == "succeeded"
+            assert reconcile_authenticated_query(db, **args) == "succeeded"
+            db.commit()
+        with SessionLocal() as db:
+            assert balance(db, "4000") == (Decimal("0") if leg == "funding" else Decimal(fee))
+            assert balance(db, "2000") == (Decimal(credit) if leg == "funding" else Decimal("0"))
+            assert balance(db, "1000") == -(Decimal(credit) if leg == "funding" else Decimal(fee))
+    with SessionLocal() as db:
+        assert plan_next_operation(db, **ids)["action"] == "completed"
+        assert db.scalar(select(func.count(JournalEntry.id))) == (4 if kind == "c2b" else 3)
+
+
+def test_direct_live_accounting_cannot_bypass_settlement_receipts():
+    from services.mpesa_pass_through_accounting import post_verified_outgoing
+    from services.mpesa_pass_through_store import record_verified_evidence
+    with SessionLocal() as db:
+        ids = new(db, "direct-live-guard")
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        record_verified_evidence(db, merchant_id=ids["merchant_id"],
+            application_id=ids["application_id"], record_id=ids["transaction_id"],
+            leg="funding", reference="fund-a", status="succeeded",
+            provider_transaction_id="unverified-gross", evidence=b"gross-only")
+        with pytest.raises(TransactionError, match="Live accounting requires"):
+            post_verified_outgoing(db, **ids)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0

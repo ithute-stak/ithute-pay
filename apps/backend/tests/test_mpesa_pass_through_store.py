@@ -42,8 +42,8 @@ def test_quote_persists_across_database_sessions():
     with SessionLocal() as db:
         persisted = find_owned(db, merchant_id=tenant, application_id=app, record_id=record_id)
         assert persisted is not None
-        assert persisted.funding_amount == Decimal("1010.00")
-        assert persisted.platform_fee == Decimal("10.00")
+        assert persisted.funding_amount == Decimal("1020.00")
+        assert persisted.platform_fee == Decimal("20.00")
         assert persisted.funding_status == "not_started"
 
 
@@ -97,14 +97,14 @@ def test_funding_then_payout_stores_verified_evidence():
                                  status="succeeded", provider_transaction_id="vodacom-fund",
                                  evidence=b"confirmed funding")
         assert load_lifecycle(row).fee_earned == 0
-        assert load_lifecycle(row).settlement_liability == Decimal("1010.00")
+        assert load_lifecycle(row).settlement_liability == Decimal("1020.00")
         begin_record_leg(db, merchant_id=tenant, application_id=app,
                          record_id=record_id, leg="onward", reference="client")
         record_verified_evidence(db, merchant_id=tenant, application_id=app,
                                  record_id=record_id, leg="onward", reference="client",
                                  status="succeeded", provider_transaction_id="vodacom-client",
                                  evidence=b"confirmed payout")
-        assert load_lifecycle(row).fee_earned == Decimal("10.00")
+        assert load_lifecycle(row).fee_earned == Decimal("20.00")
         assert load_lifecycle(row).settlement_liability == 0
         db.commit()
     with SessionLocal() as db:

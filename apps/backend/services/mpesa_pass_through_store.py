@@ -41,6 +41,7 @@ def _restore(row: MpesaPassThroughTransaction) -> PassThrough:
         funding_amount=row.funding_amount,
         onward_amount=row.onward_amount,
         fee_payer=str(snapshot["fee_payer"]),
+        transaction_type=snapshot.get("transaction_type"),
     )
     legs = {}
     for name in ("funding", "onward", "refund"):
@@ -55,12 +56,16 @@ def _restore(row: MpesaPassThroughTransaction) -> PassThrough:
 
 def create_quote_record(
     db: Session, *, merchant_id: str, application_id: str, idempotency_key: str,
-    request: dict, quote: Quote,
+    request: dict, quote: Quote, b2b_parties: dict | None = None,
 ) -> MpesaPassThroughTransaction:
     if not merchant_id or not application_id or quote.tenant_id != merchant_id:
         raise TransactionError("Authenticated merchant does not match the quote")
     if not idempotency_key or len(idempotency_key) > 180:
         raise TransactionError("Invalid idempotency key")
+    if (quote.transaction_type == "b2b") != (b2b_parties is not None):
+        raise TransactionError("B2B quotes require verified party instructions")
+    if b2b_parties is not None:
+        request = {"request": request, "b2b_parties": b2b_parties}
     payload_hash = _request_digest(request)
     existing = db.scalar(select(MpesaPassThroughTransaction).where(
         MpesaPassThroughTransaction.application_id == application_id,
@@ -76,7 +81,7 @@ def create_quote_record(
         agreement_version=quote.agreement_version, direction=quote.direction,
         currency="LSL", principal=quote.principal, provider_cost=quote.provider_cost,
         platform_fee=quote.ithutepay_fee, funding_amount=quote.funding_amount,
-        onward_amount=quote.onward_amount, quote_snapshot=_snapshot(quote),
+        onward_amount=quote.onward_amount, quote_snapshot={**_snapshot(quote), **({"b2b_parties": b2b_parties} if b2b_parties is not None else {})},
     )
     db.add(row)
     # Unique database key, not a process lock, is the concurrency safeguard.

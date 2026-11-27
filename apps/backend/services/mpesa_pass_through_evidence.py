@@ -108,3 +108,76 @@ def validate_provider_query(
 
 def evidence_digest(validated: ValidatedMovement) -> str:
     return sha256(validated.canonical_evidence).hexdigest()
+
+
+@dataclass(frozen=True)
+class ProviderCostObservation:
+    """Extracted from authenticated provider settlement evidence, not a quote."""
+    provider: str
+    transaction_id: str
+    currency: str
+    destination: str
+    gross_amount: str
+    deducted_fee: str
+    net_credit: str
+    source_debit: str | None = None
+
+
+@dataclass(frozen=True)
+class ValidatedProviderCost:
+    gross_amount: Decimal
+    deducted_fee: Decimal
+    net_credit: Decimal
+    canonical_evidence: bytes
+    source_debit: Decimal | None = None
+
+
+def validate_provider_cost(expected: ExpectedMovement, movement: ValidatedMovement,
+                           observation: ProviderCostObservation) -> ValidatedProviderCost:
+    """Match actual deductions to a confirmed movement; never infer missing fees.
+
+    Caller must authenticate the source settlement record and query independently.
+    This is a non-posting validation contract, not proof of provider entitlement.
+    """
+    if movement.outcome != "succeeded" or not movement.transaction_id:
+        raise TransactionError("Confirmed movement required for cost evidence")
+    if (observation.provider != "mpesa" or observation.currency != "LSL"
+            or expected.currency != "LSL" or movement.reference != expected.reference
+            or observation.transaction_id != movement.transaction_id
+            or observation.destination != expected.destination):
+        raise TransactionError("Provider cost identity mismatch")
+    try:
+        body = json.loads(movement.canonical_evidence)
+        if (body["reference"] != expected.reference or body["transaction_id"] != movement.transaction_id
+                or body["destination"] != expected.destination or body["source_shortcode"] != expected.source_shortcode
+                or body["currency"] != expected.currency or body["provider"] != "mpesa"
+                or body["status"] != "succeeded" or body["reversed"] is not False
+                or Decimal(body["amount"]) != expected.amount):
+            raise TransactionError("Confirmed movement differs from reservation")
+        gross, fee, net = (Decimal(v) for v in (
+            observation.gross_amount, observation.deducted_fee, observation.net_credit))
+    except (InvalidOperation, ValueError, TypeError, KeyError) as exc:
+        raise TransactionError("Malformed provider cost evidence") from exc
+    if any(not v.is_finite() or v < 0 or v.as_tuple().exponent < -2 for v in (gross, fee, net)):
+        raise TransactionError("Invalid provider cost amounts")
+    if gross <= 0 or gross != expected.amount or gross != fee + net:
+        raise TransactionError("Provider gross, fee and net credit do not reconcile")
+    source_debit = None
+    if observation.source_debit is not None:
+        try:
+            source_debit = Decimal(observation.source_debit)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise TransactionError("Malformed source debit evidence") from exc
+        if not source_debit.is_finite() or source_debit.as_tuple().exponent < -2 or source_debit < gross:
+            raise TransactionError("Invalid source debit evidence")
+        if source_debit != gross:
+            raise TransactionError("Unexpected additional sender-side provider charge")
+    canonical = json.dumps({
+        "provider": "mpesa", "transaction_id": movement.transaction_id,
+        "reference": expected.reference, "currency": "LSL", "destination": expected.destination,
+        "movement_digest": evidence_digest(movement),
+        "gross_amount": format(gross, ".2f"), "deducted_fee": format(fee, ".2f"),
+        "net_credit": format(net, ".2f"),
+        **({"source_debit": format(source_debit, ".2f")} if source_debit is not None else {}),
+    }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return ValidatedProviderCost(gross, fee, net, canonical, source_debit)

@@ -41,7 +41,7 @@ def reserve_and_bind(db, ids, *, ref):
 
 def evidence(ref, txid):
     return ProviderQueryObservation(
-        provider="mpesa", reference=ref, amount="1010.00", currency="LSL",
+        provider="mpesa", reference=ref, amount="1020.00", currency="LSL",
         source_shortcode="YYYY", destination="XXXX", status="succeeded",
         transaction_id=txid,
     )
@@ -124,7 +124,7 @@ def test_binding_after_unknown_status_blocked():
         ids = create(db, "unknown-binding")
         reserve_and_bind(db, ids, ref="f-unknown")
         result = ProviderQueryObservation(
-            provider="mpesa", reference="f-unknown", amount="1010.00",
+            provider="mpesa", reference="f-unknown", amount="1020.00",
             currency="LSL", source_shortcode="YYYY", destination="XXXX",
             status="unknown", transaction_id=None,
         )

@@ -27,14 +27,14 @@ def funded():
 
 def test_initial_quote_has_no_liability_or_revenue():
     tx = sample()
-    assert tx.quote.funding_amount == Decimal("1010.00")
+    assert tx.quote.funding_amount == Decimal("1020.00")
     assert tx.fee_earned == Decimal("0.00")
     assert tx.settlement_liability == Decimal("0.00")
 
 
 def test_funding_creates_liability_not_revenue():
     tx = funded()
-    assert tx.settlement_liability == Decimal("1010.00")
+    assert tx.settlement_liability == Decimal("1020.00")
     assert tx.fee_earned == Decimal("0.00")
     assert notification_status(tx) == "funded_pending_beneficiary_or_refund"
 
@@ -43,7 +43,7 @@ def test_confirmed_client_payout_releases_liability_and_earns_fee():
     tx = begin(funded(), "onward", "payout-1")
     tx = confirmed(tx, "onward", "payout-1", "vodacom-payout-1")
     assert tx.complete
-    assert tx.fee_earned == Decimal("10.00")
+    assert tx.fee_earned == Decimal("20.00")
     assert tx.settlement_liability == Decimal("0.00")
     assert notification_status(tx) == "completed"
 

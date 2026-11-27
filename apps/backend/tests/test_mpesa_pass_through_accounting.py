@@ -64,8 +64,8 @@ def test_funding_creates_liability_but_not_revenue():
         entries = post_verified_outgoing(db, **ids)
         assert len(entries) == 1
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("0.00")),
-            "2000": (Decimal("0.00"), Decimal("1010.00")),
+            "1000": (Decimal("1020.00"), Decimal("0.00")),
+            "2000": (Decimal("0.00"), Decimal("1020.00")),
         }
         assert post_verified_outgoing(db, **ids)[0].id == entries[0].id
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
@@ -79,9 +79,9 @@ def test_full_payment_books_balanced_three_journals_idempotently():
         confirm(db, ids, "onward", "p-paid", "provider-p-paid")
         assert len(post_verified_outgoing(db, **ids)) == 3
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("1000.00")),
-            "2000": (Decimal("1010.00"), Decimal("1010.00")),
-            "4000": (Decimal("0.00"), Decimal("10.00")),
+            "1000": (Decimal("1020.00"), Decimal("1000.00")),
+            "2000": (Decimal("1020.00"), Decimal("1020.00")),
+            "4000": (Decimal("0.00"), Decimal("20.00")),
         }
         assert len(post_verified_outgoing(db, **ids)) == 3
         assert db.scalar(select(func.count(JournalEntry.id))) == 3
@@ -119,8 +119,8 @@ def test_failed_payout_then_refund_books_no_revenue():
         entries = post_verified_outgoing(db, **ids)
         assert len(entries) == 2
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("1010.00")),
-            "2000": (Decimal("1010.00"), Decimal("1010.00")),
+            "1000": (Decimal("1020.00"), Decimal("1020.00")),
+            "2000": (Decimal("1020.00"), Decimal("1020.00")),
         }
 
 
@@ -170,3 +170,99 @@ def test_detect_existing_journal_tampering():
         db.flush()
         with pytest.raises(TransactionError, match="does not match"):
             post_verified_outgoing(db, **ids)
+
+
+def test_incoming_allocation_reconciles_actual_credit_without_recognizing_revenue():
+    from services.mpesa_pass_through_accounting import preview_incoming_allocation
+    q = quote(tenant_id="tenant-a", direction="incoming", principal="1000", approved=True)
+    result = preview_incoming_allocation(q, actual_provider_cost=Decimal("10.00"),
+                                         actual_master_credit=Decimal("990.00"))
+    assert result["merchant_onward_amount"] == Decimal("980.00")
+    assert result["potential_platform_fee"] == Decimal("10.00")
+    assert result["recognized_revenue"] == Decimal("0.00")
+
+
+@pytest.mark.parametrize("cost,credit", [("11","989"), ("10","1000"), ("NaN","990"), ("10","990.001")])
+def test_incoming_allocation_rejects_unreconciled_provider_cost(cost, credit):
+    from services.mpesa_pass_through_accounting import preview_incoming_allocation
+    q = quote(tenant_id="tenant-a", direction="incoming", principal="1000", approved=True)
+    with pytest.raises(TransactionError):
+        preview_incoming_allocation(q, actual_provider_cost=Decimal(cost), actual_master_credit=Decimal(credit))
+
+
+def test_incoming_journals_separate_provider_cost_and_platform_revenue():
+    from services.mpesa_pass_through_accounting import post_verified_incoming
+    with SessionLocal() as db:
+        merchant = Merchant(name="Incoming ledger", slug="pt-incoming-ledger")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Incoming", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="incoming", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        evidence = dict(actual_provider_cost=Decimal("10"), actual_master_credit=Decimal("990"))
+        with pytest.raises(TransactionError, match="not confirmed"):
+            post_verified_incoming(db, **ids, **evidence)
+        confirm(db, ids, "funding", "incoming-fund", "incoming-provider-fund")
+        assert len(post_verified_incoming(db, **ids, **evidence)) == 2
+        assert trial(db, merchant.id) == {
+            "1000": (Decimal("1000"), Decimal("10")),
+            "2000": (Decimal("10"), Decimal("1000")),
+        }
+        confirm(db, ids, "onward", "incoming-pay", "incoming-provider-pay")
+        with pytest.raises(TransactionError, match="recipient credit"):
+            post_verified_incoming(db, **ids, **evidence, actual_recipient_credit=Decimal("970"))
+        for _ in range(2):
+            assert len(post_verified_incoming(db, **ids, **evidence,
+                actual_recipient_credit=Decimal("980"))) == 4
+        assert trial(db, merchant.id) == {
+            "1000": (Decimal("1000"), Decimal("990")),
+            "2000": (Decimal("1000"), Decimal("1000")),
+            "4000": (Decimal("0"), Decimal("10")),
+        }
+        assert db.scalar(select(func.count(JournalEntry.id))) == 4
+
+
+def test_incoming_refund_reservation_fails_closed_before_cost_recovery_policy():
+    from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+    from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
+    with SessionLocal() as db:
+        merchant = Merchant(name="Incoming refund guard", slug="pt-incoming-refund-guard")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Incoming refund", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="incoming-refund-guard", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        confirm(db, ids, "funding", "refund-guard-fund", "refund-guard-provider")
+        with pytest.raises(TransactionError, match="cost recovery"):
+            reserve_operation(db, **ids, leg="refund", reference="unsafe-gross-refund")
+        assert db.get(MpesaPassThroughTransaction, row.id).refund_status == "not_started"
+        assert db.scalar(select(func.count(MpesaPassThroughOperationIntent.id)).where(
+            MpesaPassThroughOperationIntent.transaction_id == row.id,
+            MpesaPassThroughOperationIntent.leg == "refund")) == 0
+
+
+@pytest.mark.parametrize("recovered,transfer_cost,shortfall", [
+    ("0", "0", "10"), ("10", "0", "0"), ("10", "2", "2"), ("5", "1", "6"),
+])
+def test_incoming_refund_capacity_never_authorizes_execution(recovered, transfer_cost, shortfall):
+    from services.mpesa_pass_through_accounting import preview_incoming_refund_capacity
+    q = quote(tenant_id="merchant", direction="incoming", principal="1000", approved=True)
+    result = preview_incoming_refund_capacity(q, actual_provider_cost=Decimal("10"),
+        actual_master_credit=Decimal("990"), recovered_provider_fee=Decimal(recovered),
+        refund_transfer_cost=Decimal(transfer_cost))
+    assert result["shortfall"] == Decimal(shortfall)
+    assert result["recognized_revenue"] == Decimal("0")
+    assert result["refund_execution_authorized"] is False
+
+
+def test_incoming_refund_rejects_excess_fee_recovery():
+    from services.mpesa_pass_through_accounting import preview_incoming_refund_capacity
+    q = quote(tenant_id="merchant", direction="incoming", principal="1000", approved=True)
+    with pytest.raises(TransactionError, match="exceeds"):
+        preview_incoming_refund_capacity(q, actual_provider_cost=Decimal("10"),
+            actual_master_credit=Decimal("990"), recovered_provider_fee=Decimal("11"),
+            refund_transfer_cost=Decimal("0"))

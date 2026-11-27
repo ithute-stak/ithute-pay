@@ -69,6 +69,22 @@ export const gatewayApi = createApi({
     adminPaymentLinks: builder.query<any[], void>({ query: () => "/admin/payment-links", providesTags: ["Checkout"] }),
     adminMandates: builder.query<any[], void>({ query: () => "/admin/mandates", providesTags: ["Mandates"] }),
     adminMerchants: builder.query<any[], void>({ query: () => "/admin/merchants", providesTags: ["Merchants"] }),
+    consolidatedPassThroughRevenue: builder.query<{
+      environment: "test" | "live"; start_date: string; end_date: string;
+      totals: { period_service_revenue: string; period_tenant_provider_cost: string; closing_merchant_liability: string; closing_provider_clearing: string };
+      merchants: { merchant_id: string; period_service_revenue: string; period_tenant_provider_cost: string; closing_merchant_liability: string; closing_provider_clearing: string }[];
+    }, { environment: "test" | "live"; start_date: string; end_date: string }>({
+      query: (params) => ({ url: "/admin/mpesa-pass-through/revenue/consolidated", params }),
+      providesTags: ["Accounting"],
+    }),
+    passThroughRevenue: builder.query<{
+      posted_service_revenue: string; posted_merchant_liability: string;
+      posted_provider_clearing: string; posted_tenant_provider_cost: string;
+      provider_wallet_balance_verified: boolean; period: string;
+    }, { merchant_id: string; application_id: string }>({
+      query: (params) => ({ url: "/admin/mpesa-pass-through/revenue/summary", params }),
+      providesTags: ["Accounting"],
+    }),
     adminApplications: builder.query<any[], void>({ query: () => "/admin/applications", providesTags: ["Applications"] }),
     adminProviders: builder.query<any[], void>({ query: () => "/admin/gateway/provider-configurations", providesTags: ["Providers"] }),
     adminWebhookDeliveries: builder.query<any[], void>({ query: () => "/admin/webhook-deliveries", providesTags: ["Webhooks"] }),
@@ -215,7 +231,7 @@ export const {
   useAdminPaymentsQuery, useAdminPayoutsQuery, useAdminTransactionsQuery,
   useAdminTransfersQuery, useAdminAuthorizationsQuery, useAdminReversalsQuery,
   useAdminCheckoutSessionsQuery, useAdminPaymentLinksQuery,
-  useAdminMandatesQuery, useAdminMerchantsQuery, useAdminApplicationsQuery,
+  useAdminMandatesQuery, useAdminMerchantsQuery, useAdminApplicationsQuery, usePassThroughRevenueQuery, useConsolidatedPassThroughRevenueQuery,
   useAdminProvidersQuery, useAdminWebhookDeliveriesQuery, useAdminAuditQuery,
   useAdminTrialBalanceQuery, useAdminJournalQuery, useAdminSettlementsQuery,
   useAdminReconciliationQuery, useCreateMerchantMutation, useCreateApplicationMutation,

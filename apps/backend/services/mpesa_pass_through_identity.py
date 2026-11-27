@@ -35,6 +35,16 @@ def bind_leg_identity(
                      record_id=transaction_id, for_update=True)
     if row is None:
         raise TransactionError("Transaction outside authorized tenant scope")
+    snapshot = row.quote_snapshot or {}
+    if snapshot.get("transaction_type") == "b2b":
+        parties = snapshot.get("b2b_parties") or {}
+        sender, gateway, recipient = (parties.get(k) for k in ("sender", "gateway", "recipient"))
+        if not all((sender, gateway, recipient)) or len({sender, gateway, recipient}) != 3:
+            raise TransactionError("Missing verified B2B party instructions")
+        expected = {"funding": (sender, gateway), "onward": (gateway, recipient),
+                    "refund": (gateway, sender)}[leg]
+        if (source_party, destination_party) != expected:
+            raise TransactionError("B2B movement differs from immutable party instructions")
     intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
         MpesaPassThroughOperationIntent.transaction_id == transaction_id,
         MpesaPassThroughOperationIntent.merchant_id == merchant_id,

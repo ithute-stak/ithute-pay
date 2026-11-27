@@ -404,3 +404,142 @@ def monitoring_operator_summary(
     return operator_monitor_summary(
         db, merchant_id=merchant_id, application_id=application_id,
     )
+
+
+@router.get("/revenue/summary")
+def pass_through_revenue_summary(
+    merchant_id: str = Query(min_length=36, max_length=36),
+    application_id: str = Query(min_length=36, max_length=36),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    """Lifetime scoped accounting totals, not a provider wallet balance."""
+    from database.models import Application, JournalEntry, JournalLine, LedgerAccount
+    from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+    from services.ledger import money
+
+    app = db.get(Application, application_id)
+    if app is None or app.merchant_id != merchant_id:
+        raise HTTPException(status_code=404, detail="Application unavailable in scope")
+    rows = db.execute(
+        select(LedgerAccount.code, func.sum(JournalLine.debit), func.sum(JournalLine.credit))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(LedgerAccount, LedgerAccount.id == JournalLine.account_id)
+        .join(MpesaPassThroughTransaction, MpesaPassThroughTransaction.id == JournalEntry.source_id)
+        .where(
+            JournalEntry.source_type == "mpesa_pass_through",
+            JournalEntry.status == "posted",
+            JournalEntry.merchant_id == merchant_id,
+            JournalEntry.application_id == application_id,
+            JournalLine.merchant_id == merchant_id,
+            JournalLine.currency == "LSL",
+            LedgerAccount.merchant_id == merchant_id,
+            LedgerAccount.currency == "LSL",
+            MpesaPassThroughTransaction.merchant_id == merchant_id,
+            MpesaPassThroughTransaction.application_id == application_id,
+        ).group_by(LedgerAccount.code)
+    ).all()
+    balances = {code: money(credit - debit) for code, debit, credit in rows}
+    cost = db.scalar(
+        select(func.coalesce(func.sum(JournalLine.credit), 0))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(LedgerAccount, LedgerAccount.id == JournalLine.account_id)
+        .join(MpesaPassThroughTransaction, MpesaPassThroughTransaction.id == JournalEntry.source_id)
+        .where(
+            JournalEntry.source_type == "mpesa_pass_through",
+            JournalEntry.status == "posted",
+            JournalEntry.reference == "provider_cost:" + MpesaPassThroughTransaction.id,
+            JournalEntry.merchant_id == merchant_id,
+            JournalEntry.application_id == application_id,
+            JournalLine.merchant_id == merchant_id,
+            JournalLine.currency == "LSL",
+            LedgerAccount.merchant_id == merchant_id,
+            LedgerAccount.currency == "LSL",
+            LedgerAccount.code == "1000",
+            MpesaPassThroughTransaction.merchant_id == merchant_id,
+            MpesaPassThroughTransaction.application_id == application_id,
+        )
+    )
+    return {
+        "merchant_id": merchant_id, "application_id": application_id,
+        "currency": "LSL", "period": "lifetime",
+        "posted_service_revenue": str(money(balances.get("4000", 0))),
+        "posted_merchant_liability": str(money(balances.get("2000", 0))),
+        "posted_provider_clearing": str(money(-balances.get("1000", 0))),
+        "posted_tenant_provider_cost": str(money(cost or 0)),
+        "provider_wallet_balance_verified": False,
+        "live_pass_through_enabled": False,
+    }
+
+
+from datetime import date
+from typing import Literal
+
+
+@router.get("/revenue/consolidated")
+def consolidated_revenue(
+    environment: Literal["test", "live"] = Query(...),
+    start_date: date = Query(...),
+    end_date: date = Query(...),
+    db: Session = Depends(get_db), _: User = Depends(_operator),
+):
+    """Posted revenue by accounting date, never a provider wallet balance.
+
+    Period movements are distinct from closing balances. Environments must
+    be selected explicitly; test and live entries are never combined.
+    """
+    from sqlalchemy import case
+    from database.models import Application, JournalEntry, JournalLine, LedgerAccount
+    from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+    from services.ledger import money
+
+    if end_date < start_date or (end_date - start_date).days > 366:
+        raise HTTPException(status_code=422, detail="Choose an inclusive date range of at most 367 days")
+    tx = MpesaPassThroughTransaction
+    period = JournalEntry.posting_date >= start_date
+    revenue = case((period & (LedgerAccount.code == "4000"),
+                    JournalLine.credit - JournalLine.debit), else_=0)
+    cost = case((period & (LedgerAccount.code == "1000") &
+                 (JournalEntry.reference == "provider_cost:" + tx.id),
+                 JournalLine.credit - JournalLine.debit), else_=0)
+    liability = case((LedgerAccount.code == "2000",
+                      JournalLine.credit - JournalLine.debit), else_=0)
+    clearing = case((LedgerAccount.code == "1000",
+                     JournalLine.debit - JournalLine.credit), else_=0)
+    rows = db.execute(
+        select(tx.merchant_id, func.sum(revenue), func.sum(cost),
+               func.sum(liability), func.sum(clearing))
+        .select_from(JournalLine)
+        .join(JournalEntry, JournalEntry.id == JournalLine.journal_entry_id)
+        .join(LedgerAccount, LedgerAccount.id == JournalLine.account_id)
+        .join(tx, tx.id == JournalEntry.source_id)
+        .join(Application, Application.id == tx.application_id)
+        .where(
+            Application.environment == environment,
+            Application.merchant_id == tx.merchant_id,
+            JournalEntry.source_type == "mpesa_pass_through",
+            JournalEntry.status == "posted",
+            JournalEntry.posting_date <= end_date,
+            JournalEntry.merchant_id == tx.merchant_id,
+            JournalEntry.application_id == tx.application_id,
+            JournalLine.merchant_id == tx.merchant_id,
+            LedgerAccount.merchant_id == tx.merchant_id,
+            JournalLine.currency == "LSL", LedgerAccount.currency == "LSL",
+            tx.currency == "LSL",
+        ).group_by(tx.merchant_id).order_by(tx.merchant_id)
+    ).all()
+    keys = ("period_service_revenue", "period_tenant_provider_cost",
+            "closing_merchant_liability", "closing_provider_clearing")
+    totals = {key: str(money(sum((row[i+1] for row in rows), 0)))
+              for i, key in enumerate(keys)}
+    return {
+        "environment": environment, "currency": "LSL",
+        "start_date": start_date.isoformat(), "end_date": end_date.isoformat(),
+        "totals": totals,
+        "merchants": [{"merchant_id": row[0], **{
+            key: str(money(row[i+1])) for i, key in enumerate(keys)
+        }} for row in rows],
+        "provider_wallet_balance_verified": False,
+        "live_pass_through_enabled": False,
+    }
