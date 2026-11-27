@@ -8,9 +8,9 @@ from services.mpesa_pass_through_quotes import Rate, money, quote, quote_from_ag
 
 def test_default_outgoing_pass_through():
     q = quote(tenant_id="tenant-a", direction="outgoing", principal="1000.00", approved=True)
-    assert q.ithutepay_fee == Decimal("10.00")
+    assert q.ithutepay_fee == Decimal("20.00")
     assert q.provider_cost == Decimal("0.00")
-    assert q.funding_amount == Decimal("1010.00")
+    assert q.funding_amount == Decimal("1020.00")
     assert q.onward_amount == Decimal("1000.00")
     assert q.payload()["execution_enabled"] == "false"
 
@@ -85,3 +85,17 @@ def test_no_negative_incoming_settlement():
 def test_nonfinite_rejected():
     with pytest.raises(ValueError):
         money("NaN")
+
+
+@pytest.mark.parametrize("direction", ["incoming", "outgoing"])
+def test_approved_zero_fee_override(direction):
+    agreement = SimpleNamespace(
+        merchant_id="tenant-a", version=4, status="approved",
+        inbound_percentage_fee=0, inbound_fixed_fee=0,
+        outbound_percentage_fee=0, outbound_fixed_fee=0,
+        provider_cost_payer="tenant",
+    )
+    q = quote_from_agreement("tenant-a", direction, "1000.00", agreement)
+    assert q.ithutepay_fee == Decimal("0.00")
+    assert q.funding_amount == Decimal("1000.00")
+    assert q.onward_amount == Decimal("990.00" if direction == "incoming" else "1000.00")

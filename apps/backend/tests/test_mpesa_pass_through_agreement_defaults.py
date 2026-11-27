@@ -1,4 +1,4 @@
-"""Safe API defaults: only newly *proposed* agreements default to 1%.
+"""Safe API defaults: only newly *proposed* agreements default to 1% incoming and 2% outgoing.
 
 Existing approved agreements remain unchanged. This test never executes any
 provider operation or posts money.
@@ -8,10 +8,10 @@ from decimal import Decimal
 from routers.merchant_network_admin import AgreementProposal
 
 
-def test_new_tenant_agreement_defaults_to_one_percent():
+def test_new_tenant_agreement_defaults_to_directional_rates():
     agreement = AgreementProposal(version=1)
     assert agreement.inbound_percentage_fee == Decimal("1.00")
-    assert agreement.outbound_percentage_fee == Decimal("1.00")
+    assert agreement.outbound_percentage_fee == Decimal("2.00")
     assert agreement.inbound_fixed_fee == Decimal("0.00")
     assert agreement.outbound_fixed_fee == Decimal("0.00")
 

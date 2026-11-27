@@ -53,7 +53,7 @@ class AgreementProposal(BaseModel):
     inbound_fixed_fee: Decimal = Field(default=Decimal("0.00"), ge=0)
     inbound_percentage_fee: Decimal = Field(default=Decimal("1.00"), ge=0, le=100)
     outbound_fixed_fee: Decimal = Field(default=Decimal("0.00"), ge=0)
-    outbound_percentage_fee: Decimal = Field(default=Decimal("1.00"), ge=0, le=100)
+    outbound_percentage_fee: Decimal = Field(default=Decimal("2.00"), ge=0, le=100)
     provider_cost_payer: str = Field(default="tenant", pattern="^(tenant|ithute)$")
 
 

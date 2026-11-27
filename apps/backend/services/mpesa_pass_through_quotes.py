@@ -79,7 +79,7 @@ def quote(
     principal: object,
     agreement_version: int = 1,
     incoming_rate: Rate = Rate(),
-    outgoing_rate: Rate = Rate(),
+    outgoing_rate: Rate = Rate(percent=Decimal("2")),
     provider_incoming_rate: Rate = Rate(percent=Decimal("1")),
     provider_outgoing_rate: Rate = Rate(percent=Decimal("0")),
     provider_cost_payer: str = "tenant",
@@ -132,7 +132,7 @@ def quote_from_agreement(tenant_id: str, direction: str, principal: object, agre
         tenant_id=tenant_id, direction=direction, principal=principal,
         agreement_version=int(getattr(agreement, "version")),
         incoming_rate=tariff if direction == "incoming" else Rate(),
-        outgoing_rate=tariff if direction == "outgoing" else Rate(),
+        outgoing_rate=tariff if direction == "outgoing" else Rate(percent=Decimal("2")),
         provider_cost_payer=str(getattr(agreement, "provider_cost_payer")),
         approved=True,
     )
