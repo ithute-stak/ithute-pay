@@ -16,6 +16,7 @@ from hashlib import sha256
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
+from database.models import Application
 
 from database.models.mpesa_pass_through_identity import (
     MpesaPassThroughLegIdentity, MpesaPassThroughProviderReceipt,
@@ -51,6 +52,10 @@ def reconcile_authenticated_query(
                      record_id=transaction_id, for_update=True)
     if row is None:
         raise TransactionError("Transaction outside authorized tenant scope")
+    app = db.get(Application, application_id)
+    if app is None or app.merchant_id != merchant_id or app.environment not in {"test", "live"}:
+        raise TransactionError("Invalid application environment or ownership")
+    live = app.environment == "live"
     intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
         MpesaPassThroughOperationIntent.transaction_id == row.id,
         MpesaPassThroughOperationIntent.merchant_id == merchant_id,
@@ -80,6 +85,19 @@ def reconcile_authenticated_query(
         raise TransactionError("Incoming refund reconciliation not yet certified")
     snapshot = dict(row.quote_snapshot or {})
     costs = dict(snapshot.get("verified_provider_costs") or {})
+    if live and attested.outcome == "succeeded" and cost_observation is None:
+        raise TransactionError("Live settlement requires actual provider cost and credit evidence")
+    # Check previous successful legs before any new mutation. A legacy gross-only
+    # confirmation cannot authorize subsequent live settlement or revenue.
+    if live:
+        for prior in ("funding", "onward", "refund"):
+            if prior == leg or getattr(row, prior + "_status") != "succeeded":
+                continue
+            saved = costs.get(prior)
+            if (not saved or saved.get("provider_id") != getattr(row, prior + "_provider_id")
+                    or saved.get("movement_digest") != getattr(row, prior + "_evidence_hash")
+                    or not saved.get("cost_digest")):
+                raise TransactionError("Prior live movement lacks matched settlement evidence")
     if incoming and attested.outcome == "succeeded":
         if cost_observation is None:
             raise TransactionError("Actual provider cost evidence required")

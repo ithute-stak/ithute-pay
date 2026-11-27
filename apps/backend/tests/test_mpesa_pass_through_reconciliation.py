@@ -293,3 +293,37 @@ def test_outgoing_cost_evidence_rejects_short_credit_before_journal():
             reconcile_authenticated_query(db, **args)
         assert reconcile_authenticated_query(db, **args, cost_observation=actual) == "succeeded"
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
+
+
+def test_live_outgoing_requires_actual_cost_before_any_posting():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "live-cost-required")
+        app = db.get(Application, ids["application_id"])
+        app.environment = "live"
+        db.flush()
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        args = dict(**ids, leg="funding", source_shortcode="YYYY", destination="XXXX",
+                    observation=observation())
+        with pytest.raises(TransactionError, match="Live settlement requires"):
+            reconcile_authenticated_query(db, **args)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        assert reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+            "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020")) == "succeeded"
+        reserve_operation(db, **ids, leg="onward", reference="live-pay")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="CLIENT")
+        pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="CLIENT",
+                   observation=observation(ref="live-pay", amount="1000", source="XXXX",
+                                           destination="CLIENT", txid="live-p"))
+        with pytest.raises(TransactionError, match="Live settlement requires"):
+            reconcile_authenticated_query(db, **pay)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        with pytest.raises(TransactionError, match="Reversed transfer"):
+            reconcile_authenticated_query(db, **{**pay, "observation": observation(
+                ref="live-pay", amount="1000", source="XXXX", destination="CLIENT",
+                txid="live-p", reversed=True)})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        assert reconcile_authenticated_query(db, **pay, cost_observation=ProviderCostObservation(
+            "mpesa", "live-p", "LSL", "CLIENT", "1000", "0", "1000")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
