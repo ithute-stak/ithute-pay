@@ -45,7 +45,9 @@ def provider_for_resource(
     Origin or callback configuration is required.
     """
     name = str(provider_name or getattr(resource, "provider", "mpesa")).strip().lower()
-    shortcode = resource_business_shortcode(resource) if name == "mpesa" else None
+    if name != "mpesa":
+        raise HTTPException(status_code=409, detail="Only M-PESA is an approved payment provider")
+    shortcode = resource_business_shortcode(resource)
     if not shortcode:
         return get_provider(
             name,
