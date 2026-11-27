@@ -191,3 +191,68 @@ def test_parallel_identical_mpesa_callbacks_one_log():
     assert sorted(duplicate for _, duplicate in results) == [False, True]
     with SessionLocal() as db:
         assert db.scalar(select(func.count()).select_from(ProviderCallbackLog)) == 1
+
+
+def test_parallel_pass_through_claim_and_confirmation():
+    """Two independent sessions must converge to one claim and one fee."""
+    from database.models import MpesaPassThroughOperationIntent
+    from services.mpesa_pass_through_quotes import quote
+    from services.mpesa_pass_through_store import create_quote_record
+    from services.mpesa_pass_through_outbox import reserve_operation, claim_sandbox_simulation
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from services.mpesa_pass_through_evidence import ProviderQueryObservation, ProviderCostObservation
+    from services.mpesa_pass_through_reconciliation import reconcile_authenticated_query
+    from database.models import LedgerAccount
+
+    merchant_id, app_id = _company()
+    with SessionLocal() as db:
+        q = quote(tenant_id=merchant_id, direction="outgoing", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant_id, application_id=app_id,
+            idempotency_key="pt-race", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant_id, application_id=app_id, transaction_id=row.id)
+        db.commit()
+
+    for leg, source, destination, amount in (
+        ("funding", "YYYY", "XXXX", "1020"),
+        ("onward", "XXXX", "CLIENT", "1000"),
+    ):
+        reference = "race-" + leg
+        with SessionLocal() as db:
+            reserve_operation(db, **ids, leg=leg, reference=reference)
+            bind_leg_identity(db, **ids, leg=leg, source_party=source, destination_party=destination)
+            db.commit()
+        barrier = Barrier(2)
+        def claim():
+            with SessionLocal() as db:
+                barrier.wait(timeout=10)
+                result = claim_sandbox_simulation(db, **ids, leg=leg, reference=reference)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(claim) for _ in range(2)]
+            assert sorted(f.result(timeout=20) for f in futures) == [False, True]
+        provider_id = "provider-" + reference
+        obs = ProviderQueryObservation(provider="mpesa", reference=reference, amount=amount,
+            currency="LSL", source_shortcode=source, destination=destination,
+            status="succeeded", transaction_id=provider_id, reversed=False)
+        cost = ProviderCostObservation("mpesa", provider_id, "LSL", destination, amount, "0", amount)
+        barrier = Barrier(2)
+        def reconcile():
+            with SessionLocal() as db:
+                barrier.wait(timeout=10)
+                result = reconcile_authenticated_query(db, **ids, leg=leg,
+                    source_shortcode=source, destination=destination, observation=obs,
+                    cost_observation=cost)
+                db.commit()
+                return result
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            futures = [pool.submit(reconcile) for _ in range(2)]
+            assert [f.result(timeout=20) for f in futures] == ["succeeded", "succeeded"]
+
+    with SessionLocal() as db:
+        assert db.scalar(select(func.count()).select_from(MpesaPassThroughOperationIntent)) == 2
+        assert db.scalar(select(func.count()).select_from(JournalEntry)) == 3
+        revenue = db.scalar(select(func.sum(JournalLine.credit - JournalLine.debit))
+            .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
+            .where(LedgerAccount.merchant_id == merchant_id, LedgerAccount.code == "4000"))
+        assert revenue == Decimal("20")
