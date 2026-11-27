@@ -63,3 +63,41 @@ sudo docker exec ithute-caddy-1 caddy reload --config /etc/caddy/Caddyfile --ada
 
 Verify `https://pay.ithute.co.ls`, the existing merchant portal, and API
 health independently. Do not enable live payment rails as part of UI deployment.
+
+
+## Phase 3 — Protected read-only session visibility
+
+The Flutter Profile tab requests `GET /mobile-session` from the web origin.
+Nginx forwards **only that exact GET path** to the existing backend
+`GET /api/v1/auth/me` endpoint; it does not expose backend login,
+refresh, payment, or administrative mutations.
+
+- The existing product-local authentication dependency authorizes each request.
+- An unauthenticated request must return HTTP 401 or 403; never return another user's identity.
+- Nginx adds `Cache-Control: no-store, private` for all responses.
+- The page does not read, save or expose access tokens, API keys, passwords, or payment details.
+- The response displays the backend's `full_name`, `email`, and product `role` only after an authorized 200.
+- Customer onboarding and mobile !thute Auth OIDC/PKCE are **not** implemented.
+- In particular, this does **not** make existing merchant portal login a customer login.
+- Cookies scoped only to `portal.pay.ithute.co.ls` will not authenticate `pay.ithute.co.ls`.
+  Do not expand the cookie domain or bypass HttpOnly/SameSite protections as a shortcut.
+- Native Android/iOS authentication is not yet available; app-specific OIDC redirect
+  registration and system-browser PKCE will require a dedicated security review.
+
+### Staging checks
+
+Build with `docker build -t ithutepay-flutter-web:phase3 .` (runs Flutter
+unit tests), then deploy the image **only to a temporary container** before
+updating the production app. Check:
+
+```bash
+# From a machine with access to the standalone staging container:
+docker exec ithutepay-flutter-stage3 wget -q -O - http://127.0.0.1/healthz
+docker exec ithutepay-flutter-stage3 wget -q -O - http://127.0.0.1/service-health
+# EXPECTED without valid cookies: HTTP 401/403, not 200 or an HTML SPA response.
+docker exec ithutepay-flutter-stage3 wget -S -O /dev/null http://127.0.0.1/mobile-session
+```
+
+If an unauthenticated request to `/mobile-session` receives 200 or reveals a
+profile, **do not deploy**. Full authenticated browser testing should occur
+before exposing account details in production.
