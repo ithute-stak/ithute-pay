@@ -209,3 +209,29 @@ def test_b2b_full_beneficiary_amount_and_single_fee():
             .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
             .where(LedgerAccount.merchant_id == merchant.id, LedgerAccount.code == "4000"))
         assert revenue == Decimal("20.00")
+
+
+def test_authenticated_provider_cost_contract():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation, validate_provider_cost
+    expected = ExpectedMovement("fund-a", Decimal("1000"), "LSL", "YYYY", "XXXX")
+    movement = validate_provider_query(expected, observation(amount="1000"))
+    actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1000", "10", "990")
+    verified = validate_provider_cost(expected, movement, actual)
+    assert verified.deducted_fee == Decimal("10")
+    assert verified.net_credit == Decimal("990")
+
+
+@pytest.mark.parametrize("change", [
+    {"deducted_fee": ""}, {"deducted_fee": "NaN"}, {"net_credit": "1000"},
+    {"deducted_fee": "-1"}, {"net_credit": "990.001"},
+    {"transaction_id": "other"}, {"destination": "other"},
+    {"currency": "ZAR"}, {"gross_amount": "999"},
+])
+def test_provider_cost_contract_rejects_bad_evidence(change):
+    from dataclasses import replace
+    from services.mpesa_pass_through_evidence import ProviderCostObservation, validate_provider_cost
+    expected = ExpectedMovement("fund-a", Decimal("1000"), "LSL", "YYYY", "XXXX")
+    movement = validate_provider_query(expected, observation(amount="1000"))
+    actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1000", "10", "990")
+    with pytest.raises(TransactionError):
+        validate_provider_cost(expected, movement, replace(actual, **change))
