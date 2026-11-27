@@ -105,3 +105,39 @@ def test_pass_through_sandbox_preflight_reports_missing_credentials():
     assert not result["provider_credentials_authenticated"]
     assert not result["production_configuration_changed"]
     db.commit.assert_not_called()
+
+
+def test_sandbox_authentication_missing_config_never_calls_provider(monkeypatch):
+    from unittest.mock import Mock
+    from services.mpesa_certification_readiness import authenticate_pass_through_sandbox
+    factory = Mock()
+    monkeypatch.setattr("providers.mpesa.factory._gateway_client", factory)
+    db = Mock()
+    db.scalars.return_value.all.return_value = []
+    import asyncio
+    result = asyncio.run(authenticate_pass_through_sandbox(db))
+    assert not result["authentication_attempted"]
+    assert not result["dispatch_authorized"]
+    factory.assert_not_called()
+    db.commit.assert_not_called()
+
+
+@pytest.mark.parametrize("url", ["https://example.org", "http://openapi.m-pesa.com",
+                                 "https://openapi.m-pesa.com/production"])
+def test_sandbox_authentication_rejects_unapproved_endpoint(monkeypatch, url):
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from services.mpesa_certification_readiness import authenticate_pass_through_sandbox
+    factory = Mock()
+    monkeypatch.setattr("providers.mpesa.factory._gateway_client", factory)
+    db = Mock()
+    db.scalars.return_value.all.return_value = [SimpleNamespace(
+        environment="sandbox", enabled=True, mode="live", api_key_ciphertext="placeholder",
+        public_key="placeholder", service_provider_code="000000", origin="*",
+        country="LES", currency="LSL", market="vodacomLES", base_url=url,
+        metadata_json={"capabilities":{"query":True}})]
+    import asyncio
+    result = asyncio.run(authenticate_pass_through_sandbox(db))
+    assert result["authentication_blocker"] == "sandbox_endpoint_or_environment_mismatch"
+    assert not result["authentication_attempted"]
+    factory.assert_not_called()
