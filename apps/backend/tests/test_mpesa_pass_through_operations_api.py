@@ -148,3 +148,59 @@ def test_revenue_summary_excludes_unfunded_quotes_and_requires_admin(client, adm
     assert client.get(ROOT + "/revenue/summary",
         params={"merchant_id": "a"*36, "application_id": app},
         headers=auth(admin_token)).status_code == 404
+
+
+def test_consolidated_revenue_requires_scope_and_valid_dates(client, admin_token):
+    client.cookies.clear()
+    params = {"environment": "test", "start_date": "2026-11-01", "end_date": "2026-11-30"}
+    assert client.get(ROOT + "/revenue/consolidated", params=params).status_code in (401, 403)
+    headers = auth(admin_token)
+    response = client.get(ROOT + "/revenue/consolidated", params=params, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["totals"]["period_service_revenue"] == "0.00"
+    assert response.json()["merchants"] == []
+    for change in ({"environment": "all"}, {"start_date": "2026-12-01"},
+                   {"start_date": "2020-01-01"}):
+        assert client.get(ROOT + "/revenue/consolidated", params={**params, **change},
+                          headers=headers).status_code == 422
+
+
+def test_consolidated_revenue_separates_environment_and_period_from_closing_balances(client, admin_token):
+    from datetime import date
+    from decimal import Decimal
+    from services.ledger import post_journal
+    with SessionLocal() as db:
+        for env in ("test", "live"):
+            m = Merchant(name="Consolidated " + env, slug="pt-consolidated-" + env)
+            db.add(m); db.flush()
+            app = Application(merchant_id=m.id, name=env, environment=env)
+            db.add(app); db.flush()
+            q = quote(tenant_id=m.id, direction="outgoing", principal="1000", approved=True)
+            tx = create_quote_record(db, merchant_id=m.id, application_id=app.id,
+                idempotency_key="consolidated", request={"amount": "1000"}, quote=q)
+            z = Decimal("0")
+            def post(event, day, lines):
+                post_journal(db, merchant_id=m.id, application_id=app.id, source_type="mpesa_pass_through",
+                    source_id=tx.id, reference=event + ":" + tx.id, description=event,
+                    currency="LSL", posting_date=day, lines=lines)
+                db.flush()
+            post("funding", date(2026, 10, 31), [
+                ("provider_clearing", Decimal("1020"), z, None),
+                ("merchant_payable", z, Decimal("1020"), None)])
+            if env == "test":
+                post("onward", date(2026, 11, 2), [
+                    ("merchant_payable", Decimal("1000"), z, None),
+                    ("provider_clearing", z, Decimal("1000"), None)])
+                post("fee", date(2026, 11, 2), [
+                    ("merchant_payable", Decimal("20"), z, None),
+                    ("gateway_fee_revenue", z, Decimal("20"), None)])
+        db.commit()
+    for env, expected in (("test", ("20.00", "0.00", "20.00")),
+                          ("live", ("0.00", "1020.00", "1020.00"))):
+        response = client.get(ROOT + "/revenue/consolidated", headers=auth(admin_token),
+            params={"environment": env, "start_date": "2026-11-01", "end_date": "2026-11-30"})
+        assert response.status_code == 200, response.text
+        data = response.json()
+        assert len(data["merchants"]) == 1
+        assert tuple(data["totals"][k] for k in ("period_service_revenue",
+            "closing_merchant_liability", "closing_provider_clearing")) == expected
