@@ -36,6 +36,12 @@ def reserve_operation(
     if row is None:
         raise TransactionError("Transaction not found in authorized scope")
 
+    # Incoming funding may be net of a non-refundable provider charge.
+    # Never reserve a gross refund until actual fee recovery and refund
+    # responsibility have been independently established.
+    if row.direction == "incoming" and leg == "refund":
+        raise TransactionError("Incoming refund requires verified provider cost recovery policy")
+
     existing = db.scalar(select(MpesaPassThroughOperationIntent).where(
         MpesaPassThroughOperationIntent.transaction_id == row.id,
         MpesaPassThroughOperationIntent.leg == leg,

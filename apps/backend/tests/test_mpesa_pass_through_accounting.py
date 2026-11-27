@@ -222,3 +222,24 @@ def test_incoming_journals_separate_provider_cost_and_platform_revenue():
             "4000": (Decimal("0"), Decimal("10")),
         }
         assert db.scalar(select(func.count(JournalEntry.id))) == 4
+
+
+def test_incoming_refund_reservation_fails_closed_before_cost_recovery_policy():
+    from database.models.mpesa_pass_through import MpesaPassThroughTransaction
+    from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
+    with SessionLocal() as db:
+        merchant = Merchant(name="Incoming refund guard", slug="pt-incoming-refund-guard")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Incoming refund", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="incoming-refund-guard", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        confirm(db, ids, "funding", "refund-guard-fund", "refund-guard-provider")
+        with pytest.raises(TransactionError, match="cost recovery"):
+            reserve_operation(db, **ids, leg="refund", reference="unsafe-gross-refund")
+        assert db.get(MpesaPassThroughTransaction, row.id).refund_status == "not_started"
+        assert db.scalar(select(func.count(MpesaPassThroughOperationIntent.id)).where(
+            MpesaPassThroughOperationIntent.transaction_id == row.id,
+            MpesaPassThroughOperationIntent.leg == "refund")) == 0
