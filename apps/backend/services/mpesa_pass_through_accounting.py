@@ -116,6 +116,8 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
                      record_id=transaction_id, for_update=True)
     if row is None:
         raise TransactionError("No transaction in authenticated tenant scope")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Accounting held for provider reversal investigation")
     _require_outgoing(row)
     tx = load_lifecycle(row)
     posted = []
@@ -203,6 +205,8 @@ def post_verified_incoming(db: Session, *, merchant_id: str, application_id: str
                      record_id=transaction_id, for_update=True)
     if row is None or row.currency != "LSL":
         raise TransactionError("No LSL transaction in authenticated tenant scope")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Accounting held for provider reversal investigation")
     tx = load_lifecycle(row)
     allocation = preview_incoming_allocation(tx.quote, actual_provider_cost=actual_provider_cost,
                                              actual_master_credit=actual_master_credit)

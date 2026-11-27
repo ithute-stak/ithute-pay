@@ -349,3 +349,17 @@ def test_authenticated_reversal_quarantines_funding_without_rewriting_journals()
                                           observation=observation())
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
         db.commit()
+
+
+def test_reversal_hold_blocks_direct_accounting_replay():
+    from services.mpesa_pass_through_accounting import post_verified_outgoing
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "reversal-accounting-hold")
+        funding(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        with pytest.raises(TransactionError, match="Accounting held"):
+            post_verified_outgoing(db, **ids)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()
