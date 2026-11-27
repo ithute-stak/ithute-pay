@@ -160,3 +160,40 @@ def assess_reserved_recovery(
 def assert_live_dispatch_disabled(readiness: AccountReadiness) -> None:
     """Explicit no-go until certified live sender is separately implemented."""
     raise PermissionError("Pass-through M-Pesa dispatch disabled pending provider/regulatory certification")
+
+
+@dataclass(frozen=True)
+class B2BReadiness:
+    sender_merchant_id: str
+    recipient_merchant_id: str
+    sender_shortcode: str
+    gateway_shortcode: str
+    recipient_shortcode: str
+    sender_agreement_version: int
+    environment: str
+    live_execution_authorized: bool = False
+
+
+def check_b2b_readiness(db: Session, *, sender_merchant_id: str,
+                        recipient_merchant_id: str, environment: str,
+                        now: datetime | None = None) -> B2BReadiness:
+    """Internal preflight only; identities must be resolved by trusted backend.
+
+    Recipient eligibility does not assess a second commercial fee. Only the
+    sender agreement supplies the outgoing tariff.
+    """
+    if not sender_merchant_id or not recipient_merchant_id or sender_merchant_id == recipient_merchant_id:
+        raise TransactionError("Distinct sender and recipient merchants required")
+    at = now or datetime.now(timezone.utc)
+    sender = check_account_readiness(db, merchant_id=sender_merchant_id,
+                                     environment=environment, now=at)
+    recipient = check_account_readiness(db, merchant_id=recipient_merchant_id,
+                                        environment=environment, now=at)
+    if sender.gateway_shortcode != recipient.gateway_shortcode or len({
+        sender.funding_shortcode, sender.gateway_shortcode, recipient.funding_shortcode
+    }) != 3:
+        raise TransactionError("Distinct verified B2B parties and common gateway required")
+    return B2BReadiness(sender_merchant_id, recipient_merchant_id,
+                        sender.funding_shortcode, sender.gateway_shortcode,
+                        recipient.funding_shortcode, sender.agreement_version,
+                        environment)

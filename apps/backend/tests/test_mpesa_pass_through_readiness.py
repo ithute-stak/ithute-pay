@@ -150,3 +150,42 @@ def test_wrong_tenant_cannot_recover_operation():
                 db, merchant_id="another-tenant", application_id=app.id,
                 transaction_id=tx.id, leg="funding",
             )
+
+
+def test_b2b_preflight_uses_sender_agreement_and_verified_distinct_accounts():
+    from services.mpesa_pass_through_readiness import check_b2b_readiness
+    with SessionLocal() as db:
+        master, sender, _, _, _ = setup(db)
+        recipient = Merchant(name="Recipient", slug="pt-b2b-recipient", status="active")
+        db.add(recipient); db.flush()
+        db.add_all([
+            TenantMerchantContract(master_merchant_id=master.id, tenant_merchant_id=recipient.id,
+                status="approved", kyc_status="verified", custody_mode="own_shortcode"),
+            MerchantCommercialAgreement(merchant_id=recipient.id, version=9, status="approved",
+                currency="LSL", inbound_percentage_fee=Decimal("5"), outbound_percentage_fee=Decimal("4")),
+            TenantProviderAccount(merchant_id=recipient.id, provider="mpesa", environment="sandbox",
+                shortcode="R-ZZZZ", ownership_status="verified", enabled=True),
+        ])
+        db.flush()
+        ready = check_b2b_readiness(db, sender_merchant_id=sender.id,
+                                    recipient_merchant_id=recipient.id, environment="sandbox")
+        assert ready.sender_shortcode == "T-YYYY"
+        assert ready.recipient_shortcode == "R-ZZZZ"
+        assert ready.gateway_shortcode == "P-XXXX"
+        assert ready.sender_agreement_version == 2
+        assert not ready.live_execution_authorized
+        recipient.status = "suspended"
+        db.flush()
+        with pytest.raises(TransactionError):
+            check_b2b_readiness(db, sender_merchant_id=sender.id,
+                                recipient_merchant_id=recipient.id, environment="sandbox")
+
+
+def test_b2b_preflight_rejects_self_transfer_and_missing_recipient():
+    from services.mpesa_pass_through_readiness import check_b2b_readiness
+    with SessionLocal() as db:
+        _, sender, _, _, _ = setup(db)
+        for recipient in (sender.id, "unknown-recipient"):
+            with pytest.raises(TransactionError):
+                check_b2b_readiness(db, sender_merchant_id=sender.id,
+                                    recipient_merchant_id=recipient, environment="sandbox")
