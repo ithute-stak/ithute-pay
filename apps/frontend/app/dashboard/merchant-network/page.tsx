@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useAdminMerchantsQuery, useMeQuery } from "@/store/gateway-api";
+import { useAdminMerchantsQuery, useAdminApplicationsQuery, usePassThroughRevenueQuery, useMeQuery } from "@/store/gateway-api";
 
 type Master = { merchant_id: string; active: boolean; shared_custody_enabled: boolean };
 type Tenant = { id: string; master_merchant_id: string; tenant_merchant_id: string; custody_mode: string; status: string; kyc_status: string };
@@ -50,6 +50,13 @@ export default function MerchantNetworkPage() {
   const { data: user } = useMeQuery();
   const { data: merchants = [] } = useAdminMerchantsQuery();
   const allowed = user?.role === "platform_super_admin" || user?.role === "platform_admin";
+  const { data: applications = [], isError: applicationsError } = useAdminApplicationsQuery(undefined, { skip: !allowed });
+  const [revenueMerchant, setRevenueMerchant] = useState("");
+  const [revenueApp, setRevenueApp] = useState("");
+  const scopedApps = applications.filter((a: { merchant_id: string }) => a.merchant_id === revenueMerchant);
+  const validRevenueScope = !!revenueMerchant && scopedApps.some((a: { id: string }) => a.id === revenueApp);
+  const revenue = usePassThroughRevenueQuery({ merchant_id: revenueMerchant, application_id: revenueApp },
+    { skip: !allowed || !validRevenueScope, refetchOnMountOrArgChange: true });
   const [master, setMaster] = useState<Master | null>(null);
   const [tenants, setTenants] = useState<Tenant[]>([]);
   const [shortcodes, setShortcodes] = useState<ShortcodeRequest[]>([]);
@@ -121,6 +128,35 @@ export default function MerchantNetworkPage() {
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {message && <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">{message}</div>}
     </div>
+    <Card><CardHeader><CardTitle>Pass-through revenue and liabilities</CardTitle></CardHeader>
+      <CardContent className="space-y-4">
+        <p className="text-sm text-muted-foreground">Lifetime posted LSL accounting totals by business and application. Test and live applications are reported separately. These figures are not verified wallet balances.</p>
+        <div className="grid gap-3 md:grid-cols-2">
+          <label className="block text-sm font-medium">Business
+            <select className="mt-1 h-11 w-full rounded-xl border border-border bg-background px-3" value={revenueMerchant} onChange={e => { setRevenueMerchant(e.target.value); setRevenueApp(""); }}>
+              <option value="">Select business</option>{merchants.map((m: {id:string;name:string}) => <option key={m.id} value={m.id}>{m.name}</option>)}
+            </select>
+          </label>
+          <label className="block text-sm font-medium">Application
+            <select className="mt-1 h-11 w-full rounded-xl border border-border bg-background px-3" disabled={!revenueMerchant} value={revenueApp} onChange={e => setRevenueApp(e.target.value)}>
+              <option value="">Select application</option>{scopedApps.map((a: {id:string;name:string;environment:string}) => <option key={a.id} value={a.id}>{a.name} ({a.environment})</option>)}
+            </select>
+          </label>
+        </div>
+        {applicationsError && <p role="alert" className="text-sm text-red-600">Unable to load applications.</p>}
+        {!validRevenueScope ? <p className="text-sm text-muted-foreground">Select a business and its application to view posted totals.</p> :
+          revenue.isError ? <p role="alert" className="text-sm text-red-600">Unable to load revenue totals. No balance is assumed.</p> :
+          revenue.isFetching || !revenue.currentData ? <p role="status" className="text-sm">Loading revenue totals…</p> :
+          <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+            {([
+              ["Earned service revenue", revenue.currentData.posted_service_revenue],
+              ["Tenant-borne provider costs", revenue.currentData.posted_tenant_provider_cost],
+              ["Merchant liabilities", revenue.currentData.posted_merchant_liability],
+              ["Provider clearing (ledger)", revenue.currentData.posted_provider_clearing],
+            ]).map(([label, value]) => <div key={label} className="rounded-xl border border-border p-4"><p className="text-xs text-muted-foreground">{label}</p><p className="mt-2 text-xl font-semibold tabular-nums">M{value}</p></div>)}
+          </div>}
+        <Button variant="secondary" disabled={!validRevenueScope || revenue.isFetching} onClick={() => void revenue.refetch()}>Refresh revenue</Button>
+      </CardContent></Card>
     <div className="grid gap-4 md:grid-cols-2">
       <Card><CardHeader><CardTitle className="flex items-center gap-2"><Building2 className="h-5 w-5"/>Ithute master merchant</CardTitle></CardHeader><CardContent className="space-y-3">
         {master ? <div className="space-y-2 text-sm">
