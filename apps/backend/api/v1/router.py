@@ -2,9 +2,7 @@ from fastapi import APIRouter
 from routers.mpesa_pass_through_preview import router as mpesa_pass_through_preview_router
 from routers.mpesa_pass_through_operations import router as mpesa_pass_through_operations_router
 
-from providers.ecocash.routes import ROUTERS as ECOCASH_ROUTERS
 from providers.mpesa.routes import ROUTERS as MPESA_ROUTERS
-from providers.paypal.routes import ROUTERS as PAYPAL_ROUTERS
 from routers import (
     admin, auth, authorizations, checkout, developer, finance, gateway_admin, health,
     loanhub_fee_preview, loanhub_intent_preview, loanhub_signed_handshake, loanhub_signed_intent_preview, loanhub_funding_accounts, loanhub_funding_status, loanhub_master_binding, mandates, merchant_network_admin, notifications, operations,
@@ -52,5 +50,5 @@ api_router.include_router(portal.router)
 api_router.include_router(provider_catalog.router)
 api_router.include_router(ws.router)
 
-for provider_router in (*MPESA_ROUTERS, *ECOCASH_ROUTERS, *PAYPAL_ROUTERS):
+for provider_router in MPESA_ROUTERS:
     api_router.include_router(provider_router)
