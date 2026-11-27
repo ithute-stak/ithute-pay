@@ -363,3 +363,68 @@ def test_reversal_hold_blocks_direct_accounting_replay():
             post_verified_outgoing(db, **ids)
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
         db.commit()
+
+
+@pytest.mark.parametrize("kind,gross,cost,credit,payout_amount,fee", [
+    ("c2b", "1000", "10", "990", "980", "10"),
+    ("b2c", "1020", "0", "1020", "1000", "20"),
+    ("b2b", "1020", "0", "1020", "1000", "20"),
+])
+def test_offline_worker_full_journey(kind, gross, cost, credit, payout_amount, fee):
+    """Synthetic evidence only; no provider calls or real funds."""
+    from database.models import JournalLine, LedgerAccount
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation, plan_next_operation
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        merchant = Merchant(name="Worker " + kind, slug="pt-worker-" + kind)
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name=kind, environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming" if kind == "c2b" else "outgoing",
+                  transaction_type=kind, principal="1000", approved=True)
+        sender = "CLIENT" if kind == "c2b" else "YYYY"
+        recipient = "CLIENT" if kind == "b2c" else "ZZZZ"
+        parties = {"sender": sender, "gateway": "XXXX", "recipient": recipient,
+                   "recipient_merchant_id": "synthetic-recipient", "environment": "sandbox"} if kind == "b2b" else None
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="worker-" + kind, request={"amount": "1000"}, quote=q, b2b_parties=parties)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        db.commit()
+
+    def balance(db, code):
+        return db.scalar(select(func.coalesce(func.sum(JournalLine.credit - JournalLine.debit), 0))
+            .join(LedgerAccount, JournalLine.account_id == LedgerAccount.id)
+            .where(LedgerAccount.merchant_id == ids["merchant_id"], LedgerAccount.code == code))
+
+    for leg, source, destination, amount, deduction, net in (
+        ("funding", sender, "XXXX", gross, cost, credit),
+        ("onward", "XXXX", recipient, payout_amount, "0", payout_amount),
+    ):
+        reference = kind + "-" + leg
+        provider_id = "synthetic-" + reference
+        with SessionLocal() as db:
+            assert plan_next_operation(db, **ids)["action"] == (
+                "await_funding_authorization" if leg == "funding" else "await_onward_authorization")
+            reserve_operation(db, **ids, leg=leg, reference=reference)
+            bind_leg_identity(db, **ids, leg=leg, source_party=source, destination_party=destination)
+            assert claim_sandbox_simulation(db, **ids, leg=leg, reference=reference)
+            db.commit()
+        # Simulate restart between claim and observation; never claim twice.
+        with SessionLocal() as db:
+            assert not claim_sandbox_simulation(db, **ids, leg=leg, reference=reference)
+            assert plan_next_operation(db, **ids)["action"] == "query_existing_reference"
+            args = dict(**ids, leg=leg, source_shortcode=source, destination=destination,
+                observation=observation(ref=reference, amount=amount, source=source,
+                                        destination=destination, txid=provider_id),
+                cost_observation=ProviderCostObservation("mpesa", provider_id, "LSL",
+                    destination, amount, deduction, net))
+            assert reconcile_authenticated_query(db, **args) == "succeeded"
+            assert reconcile_authenticated_query(db, **args) == "succeeded"
+            db.commit()
+        with SessionLocal() as db:
+            assert balance(db, "4000") == (Decimal("0") if leg == "funding" else Decimal(fee))
+            assert balance(db, "2000") == (Decimal(credit) if leg == "funding" else Decimal("0"))
+            assert balance(db, "1000") == -(Decimal(credit) if leg == "funding" else Decimal(fee))
+    with SessionLocal() as db:
+        assert plan_next_operation(db, **ids)["action"] == "completed"
+        assert db.scalar(select(func.count(JournalEntry.id))) == (4 if kind == "c2b" else 3)
