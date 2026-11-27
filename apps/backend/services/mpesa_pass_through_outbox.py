@@ -121,6 +121,14 @@ def plan_next_operation(db: Session, *, merchant_id: str, application_id: str,
     if (row.quote_snapshot or {}).get("reversal_holds"):
         return decision("reversal_investigation")
     tx = load_lifecycle(row)
+    if app.environment == "live":
+        from services.mpesa_pass_through_accounting import _require_confirmed_leg
+        for name in ("funding", "onward", "refund"):
+            if getattr(tx, name).status == LegStatus.SUCCEEDED:
+                try:
+                    _require_confirmed_leg(db, row, name)
+                except TransactionError:
+                    return decision("investigate_unverified_live_settlement", name)
     for name in ("funding", "onward", "refund"):
         movement = getattr(tx, name)
         if movement.status in {LegStatus.PROCESSING, LegStatus.UNKNOWN}:

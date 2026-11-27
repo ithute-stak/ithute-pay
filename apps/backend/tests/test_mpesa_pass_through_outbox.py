@@ -225,3 +225,22 @@ def test_live_reservation_requires_verified_funding_receipt():
                 reserve_operation(db, **args, leg=leg, reference="blocked-" + leg)
         assert len(db.scalars(select(MpesaPassThroughOperationIntent).where(
             MpesaPassThroughOperationIntent.transaction_id == tx)).all()) == 1
+
+
+def test_live_worker_does_not_report_unverified_completion():
+    from services.mpesa_pass_through_outbox import plan_next_operation
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "live-worker-guard")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx)
+        for leg, reference in (("funding", "guard-f"), ("onward", "guard-p")):
+            reserve_operation(db, **args, leg=leg, reference=reference)
+            record_verified_evidence(db, merchant_id=merchant, application_id=app,
+                record_id=tx, leg=leg, reference=reference, status="succeeded",
+                provider_transaction_id="synthetic-" + reference, evidence=b"gross-only")
+        assert plan_next_operation(db, **args)["action"] == "completed"
+        db.get(Application, app).environment = "live"
+        db.flush()
+        result = plan_next_operation(db, **args)
+        assert result["action"] == "investigate_unverified_live_settlement"
+        assert result["leg"] == "funding"
+        assert result["dispatch_authorized"] is False
