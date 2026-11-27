@@ -170,3 +170,21 @@ def test_detect_existing_journal_tampering():
         db.flush()
         with pytest.raises(TransactionError, match="does not match"):
             post_verified_outgoing(db, **ids)
+
+
+def test_incoming_allocation_reconciles_actual_credit_without_recognizing_revenue():
+    from services.mpesa_pass_through_accounting import preview_incoming_allocation
+    q = quote(tenant_id="tenant-a", direction="incoming", principal="1000", approved=True)
+    result = preview_incoming_allocation(q, actual_provider_cost=Decimal("10.00"),
+                                         actual_master_credit=Decimal("990.00"))
+    assert result["merchant_onward_amount"] == Decimal("980.00")
+    assert result["potential_platform_fee"] == Decimal("10.00")
+    assert result["recognized_revenue"] == Decimal("0.00")
+
+
+@pytest.mark.parametrize("cost,credit", [("11","989"), ("10","1000"), ("NaN","990"), ("10","990.001")])
+def test_incoming_allocation_rejects_unreconciled_provider_cost(cost, credit):
+    from services.mpesa_pass_through_accounting import preview_incoming_allocation
+    q = quote(tenant_id="tenant-a", direction="incoming", principal="1000", approved=True)
+    with pytest.raises(TransactionError):
+        preview_incoming_allocation(q, actual_provider_cost=Decimal(cost), actual_master_credit=Decimal(credit))

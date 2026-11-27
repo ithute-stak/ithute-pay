@@ -156,3 +156,32 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
             ("provider_clearing", ZERO, gross, "Refund sent to original funding merchant"),
         ]))
     return posted
+
+def preview_incoming_allocation(quote, *, actual_provider_cost: Decimal,
+                                actual_master_credit: Decimal) -> dict[str, Decimal]:
+    """Non-posting preview using independently reconciled funding evidence.
+
+    This does not authenticate evidence, certify onward transfer charges, or
+    permit incoming refunds or ledger posting. Mismatches require review.
+    """
+    if quote.direction != "incoming" or quote.fee_payer != "tenant":
+        raise TransactionError("Only tenant-paid incoming allocation is supported")
+    for value in (actual_provider_cost, actual_master_credit):
+        if not isinstance(value, Decimal) or not value.is_finite() or value < ZERO or value != money(value):
+            raise TransactionError("Invalid actual provider amount")
+    if actual_provider_cost != quote.provider_cost:
+        raise TransactionError("Actual provider cost differs from approved quote")
+    if quote.funding_amount != quote.principal or actual_master_credit != quote.principal - actual_provider_cost:
+        raise TransactionError("Actual master credit does not reconcile")
+    if quote.ithutepay_fee < ZERO or quote.onward_amount <= ZERO:
+        raise TransactionError("Invalid incoming allocation")
+    if actual_master_credit != quote.onward_amount + quote.ithutepay_fee:
+        raise TransactionError("Merchant proceeds and platform fee do not reconcile")
+    return {
+        "gross_customer_payment": quote.principal,
+        "provider_cost": actual_provider_cost,
+        "master_net_credit": actual_master_credit,
+        "merchant_onward_amount": quote.onward_amount,
+        "potential_platform_fee": quote.ithutepay_fee,
+        "recognized_revenue": ZERO,
+    }
