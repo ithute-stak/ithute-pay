@@ -24,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type ProviderId = "mpesa" | "ecocash" | "fnb" | "paypal";
+export type ProviderId = "mpesa";
 
 export type ProviderWorkspace = {
   id: ProviderId;
