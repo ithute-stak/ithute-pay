@@ -147,3 +147,44 @@ def plan_next_operation(db: Session, *, merchant_id: str, application_id: str,
             return decision("manual_refund_review")
         return decision("await_onward_authorization", "onward")
     return decision("manual_review")
+
+
+async def run_sandbox_reconciliation_check(db: Session, *, merchant_id: str,
+                                           application_id: str, transaction_id: str,
+                                           client, conversation_reference: str) -> dict:
+    """One explicit diagnostic query, never a dispatch or accounting worker.
+
+    Client must be constructed by trusted code with approved sandbox credentials.
+    No automatic retries, scheduling, settlement confirmation or journal writes.
+    Caller should use a short-lived read-only session.
+    """
+    from database.models.mpesa_pass_through_identity import MpesaPassThroughLegIdentity
+    from services.mpesa_pass_through_evidence import ExpectedMovement
+    from services.mpesa_pass_through_query_probe import probe_sandbox_query
+    plan = plan_next_operation(db, merchant_id=merchant_id,
+        application_id=application_id, transaction_id=transaction_id)
+    if plan["environment"] != "test" or getattr(client, "environment", None) != "sandbox":
+        raise TransactionError("Reconciliation diagnostic requires test application and sandbox client")
+    if plan["action"] != "query_existing_reference":
+        return {**plan, "query_performed": False, "accounting_authorized": False}
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == transaction_id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == plan["leg"],
+        MpesaPassThroughOperationIntent.reference == plan["reference"],
+    ))
+    if intent is None or intent.provider != "mpesa" or intent.state not in {"reserved", "needs_reconciliation"}:
+        raise TransactionError("Existing unresolved M-Pesa reservation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    if binding is None:
+        raise TransactionError("Immutable provider party binding required")
+    expected = ExpectedMovement(intent.reference, intent.amount, intent.currency,
+                                binding.source_party, binding.destination_party)
+    result = await probe_sandbox_query(client, expected=expected,
+        third_party_conversation_id=conversation_reference)
+    return {**plan, "query_performed": True, "observed_status": result.status,
+            "identity_evidence_sufficient": result.sufficient_evidence,
+            "missing_fields": result.missing_fields,
+            "accounting_authorized": False}

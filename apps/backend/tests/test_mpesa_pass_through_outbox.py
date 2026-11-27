@@ -136,3 +136,46 @@ def test_worker_plan_never_dispatches_or_retries_reserved_reference():
             provider_transaction_id="provider-f", evidence=b"gross only")
         assert plan_next_operation(db, **args)["action"] == "await_verified_funding_cost"
         assert len(db.scalars(select(MpesaPassThroughOperationIntent)).all()) == 1
+
+
+@pytest.mark.asyncio
+async def test_sandbox_reconciliation_worker_queries_without_posting():
+    from services.mpesa_pass_through_outbox import run_sandbox_reconciliation_check
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from integrations.base import ProviderResult
+    from database.models import JournalEntry
+
+    class Client:
+        environment = "sandbox"
+        country = "LES"
+        currency = "LSL"
+        market = "vodacomLES"
+        shortcode = "YYYY"
+        calls = 0
+        async def query(self, **kwargs):
+            self.calls += 1
+            assert kwargs["query_reference"] == "worker-f"
+            return ProviderResult(accepted=True, status="succeeded", transaction_id="p1",
+                raw={"output_ResponseCode": "INS-0", "output_TransactionID": "p1"})
+
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "worker-query")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx)
+        client = Client()
+        async def run():
+            return await run_sandbox_reconciliation_check(db, **args, client=client,
+                conversation_reference="check-1")
+        assert (await run())["query_performed"] is False
+        reserve_operation(db, **args, leg="funding", reference="worker-f")
+        assert (await run())["query_performed"] is False
+        bind_leg_identity(db, **args, leg="funding", source_party="YYYY", destination_party="XXXX")
+        result = await run()
+        assert result["query_performed"] is True
+        assert result["observed_status"] == "unknown"
+        assert result["accounting_authorized"] is False
+        assert client.calls == 1
+        assert not db.scalars(select(JournalEntry)).all()
+        client.environment = "production"
+        with pytest.raises(TransactionError, match="sandbox"):
+            await run()
+        assert client.calls == 1
