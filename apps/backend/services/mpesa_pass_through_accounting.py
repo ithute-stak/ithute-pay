@@ -104,10 +104,10 @@ def post_verified_outgoing(db: Session, *, merchant_id: str, application_id: str
                            transaction_id: str) -> list[JournalEntry]:
     """Post only evidenced movements in the caller's existing SQL transaction.
 
-    Funding: Dr provider clearing 1010 / Cr merchant liability 1010.
+    Funding: Dr provider clearing 1020 / Cr merchant liability 1020.
     Payout:  Dr merchant liability 1000 / Cr provider clearing 1000.
-    Fee:     Dr merchant liability 10 / Cr platform fee revenue 10.
-    Refund:  Dr merchant liability 1010 / Cr provider clearing 1010.
+    Fee:     Dr merchant liability 20 / Cr platform fee revenue 20.
+    Refund:  Dr merchant liability 1020 / Cr provider clearing 1020.
 
     An unconfirmed or ambiguous payout posts NO payout or revenue.
     Caller is responsible for rollback if this function raises.

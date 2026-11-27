@@ -64,8 +64,8 @@ def test_funding_creates_liability_but_not_revenue():
         entries = post_verified_outgoing(db, **ids)
         assert len(entries) == 1
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("0.00")),
-            "2000": (Decimal("0.00"), Decimal("1010.00")),
+            "1000": (Decimal("1020.00"), Decimal("0.00")),
+            "2000": (Decimal("0.00"), Decimal("1020.00")),
         }
         assert post_verified_outgoing(db, **ids)[0].id == entries[0].id
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
@@ -79,9 +79,9 @@ def test_full_payment_books_balanced_three_journals_idempotently():
         confirm(db, ids, "onward", "p-paid", "provider-p-paid")
         assert len(post_verified_outgoing(db, **ids)) == 3
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("1000.00")),
-            "2000": (Decimal("1010.00"), Decimal("1010.00")),
-            "4000": (Decimal("0.00"), Decimal("10.00")),
+            "1000": (Decimal("1020.00"), Decimal("1000.00")),
+            "2000": (Decimal("1020.00"), Decimal("1020.00")),
+            "4000": (Decimal("0.00"), Decimal("20.00")),
         }
         assert len(post_verified_outgoing(db, **ids)) == 3
         assert db.scalar(select(func.count(JournalEntry.id))) == 3
@@ -119,8 +119,8 @@ def test_failed_payout_then_refund_books_no_revenue():
         entries = post_verified_outgoing(db, **ids)
         assert len(entries) == 2
         assert trial(db, ids["merchant_id"]) == {
-            "1000": (Decimal("1010.00"), Decimal("1010.00")),
-            "2000": (Decimal("1010.00"), Decimal("1010.00")),
+            "1000": (Decimal("1020.00"), Decimal("1020.00")),
+            "2000": (Decimal("1020.00"), Decimal("1020.00")),
         }
 
 

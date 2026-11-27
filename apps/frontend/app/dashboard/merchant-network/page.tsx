@@ -42,8 +42,8 @@ function Status({ children }: { children: string }) {
 }
 
 const emptyRates: Rates = {
-  version: 1, inbound_fixed_fee: "0.00", inbound_percentage_fee: "0.00",
-  outbound_fixed_fee: "0.00", outbound_percentage_fee: "0.00", provider_cost_payer: "tenant",
+  version: 1, inbound_fixed_fee: "0.00", inbound_percentage_fee: "1.00",
+  outbound_fixed_fee: "0.00", outbound_percentage_fee: "2.00", provider_cost_payer: "tenant",
 };
 
 export default function MerchantNetworkPage() {
