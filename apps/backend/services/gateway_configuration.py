@@ -102,11 +102,11 @@ def ensure_default_gateway_provider_configuration(db: Session | None = None) -> 
 
 
 def active_gateway_provider_configuration(db: Session, provider: str = "mpesa") -> GatewayProviderConfiguration | None:
-    if provider == "golink":
+    if provider.strip().lower() != "mpesa":
         return None
     return db.scalar(
         select(GatewayProviderConfiguration).where(
-            GatewayProviderConfiguration.provider == provider,
+            GatewayProviderConfiguration.provider == "mpesa",
             GatewayProviderConfiguration.enabled.is_(True),
             GatewayProviderConfiguration.active.is_(True),
         ).order_by(GatewayProviderConfiguration.updated_at.desc())
@@ -116,8 +116,8 @@ def active_gateway_provider_configuration(db: Session, provider: str = "mpesa") 
 def validate_configuration_for_activation(row: GatewayProviderConfiguration) -> None:
     if not row.enabled:
         raise HTTPException(status_code=409, detail="Provider configuration is disabled")
-    if row.provider == "golink":
-        raise HTTPException(status_code=409, detail="Golink has been retired")
+    if row.provider != "mpesa":
+        raise HTTPException(status_code=409, detail="Only M-PESA is an approved provider")
     if row.mode != "live":
         return
     missing: list[str] = []
@@ -136,27 +136,6 @@ def validate_configuration_for_activation(row: GatewayProviderConfiguration) -> 
                 missing.append("production organisation shortcode (sandbox compatibility shortcode cannot be used)")
             if row.origin == MPESA_KNOWN_GOOD_SANDBOX_PROFILE["origin"]:
                 missing.append("production registered Origin (sandbox compatibility Origin '*' cannot be used)")
-    elif row.provider == "ecocash":
-        metadata = row.metadata_json or {}
-        if not metadata.get("username"): missing.append("username")
-        if not row.api_key_ciphertext: missing.append("password")
-        if not metadata.get("merchant_code"): missing.append("merchant_code")
-        if not metadata.get("merchant_pin"): missing.append("merchant_pin")
-        if not metadata.get("merchant_number"): missing.append("merchant_number")
-    elif row.provider == "fnb":
-        metadata = row.metadata_json or {}
-        if not row.base_url: missing.append("base_url")
-        if not metadata.get("client_id"): missing.append("client_id")
-        if not row.api_key_ciphertext: missing.append("client_secret")
-        if not metadata.get("account_id"): missing.append("account_id")
-        if not metadata.get("certificate_reference"): missing.append("certificate_reference")
-        if not metadata.get("operation_paths"): missing.append("operation_paths")
-    elif row.provider == "paypal":
-        metadata = row.metadata_json or {}
-        if not row.base_url: missing.append("base_url")
-        if not metadata.get("client_id"): missing.append("client_id")
-        if not row.api_key_ciphertext: missing.append("client_secret")
-        if not metadata.get("webhook_id"): missing.append("webhook_id")
     if missing:
         raise HTTPException(status_code=409, detail=f"Live provider mode is missing: {', '.join(missing)}")
 
@@ -231,8 +210,8 @@ def serialize_gateway_provider_configuration(row: GatewayProviderConfiguration) 
 
 def upsert_gateway_provider_configuration(db: Session, payload: dict) -> GatewayProviderConfiguration:
     provider = str(payload.get("provider") or "mpesa").lower().strip()
-    if provider not in {"mpesa", "ecocash", "fnb", "paypal"}:
-        raise HTTPException(status_code=400, detail="provider must be mpesa, ecocash, fnb or paypal")
+    if provider != "mpesa":
+        raise HTTPException(status_code=400, detail="provider must be mpesa")
     environment = str(payload.get("environment") or "sandbox").lower().strip()
     if environment not in {"sandbox", "production"}:
         raise HTTPException(status_code=400, detail="environment must be sandbox or production")
@@ -263,12 +242,6 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
             "country": MPESA_KNOWN_GOOD_SANDBOX_PROFILE["country"],
             "currency": MPESA_KNOWN_GOOD_SANDBOX_PROFILE["currency"],
         },
-        "ecocash": {"base_url": "https://developers.ecocash.co.zw/sandbox/payment/v1" if environment == "sandbox" else "https://developers.ecocash.co.zw/payment/v1", "market": "ecocashZW", "country": "ZWE", "currency": "USD"},
-        "fnb": {"base_url": "", "market": "fnbLES", "country": "LES", "currency": "LSL"},
-        "paypal": {
-            "base_url": "https://api-m.sandbox.paypal.com" if environment == "sandbox" else "https://api-m.paypal.com",
-            "market": "paypal", "country": "LES", "currency": "USD",
-        },
     }[provider]
     row.base_url = str(payload.get("base_url") or row.base_url or provider_defaults["base_url"]).rstrip("/")
     row.market = str(payload.get("market") or row.market or provider_defaults["market"])
@@ -295,8 +268,7 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
         row.public_key = str(payload["public_key"]).strip()
 
     defaults = default_provider_urls()
-    paypal_callback = _join(settings.PUBLIC_API_URL, f"{settings.API_V1_PREFIX}/provider-callbacks/paypal")
-    row.callback_url = str(payload.get("callback_url") or row.callback_url or (paypal_callback if provider == "paypal" else defaults["callback_url"]))
+    row.callback_url = str(payload.get("callback_url") or row.callback_url or defaults["callback_url"])
     row.result_url = str(payload.get("result_url") or row.result_url or defaults["result_url"])
     row.timeout_url = str(payload.get("timeout_url") or row.timeout_url or defaults["timeout_url"])
     row.redirect_url = str(payload.get("redirect_url") or row.redirect_url or defaults["redirect_url"])
@@ -328,32 +300,6 @@ def upsert_gateway_provider_configuration(db: Session, payload: dict) -> Gateway
             metadata["compatibility_profile"] = "legacy_ithute_vodacom_lesotho_sandbox"
         else:
             metadata.pop("compatibility_profile", None)
-    elif provider == "ecocash":
-        for key in ("username", "merchant_code", "merchant_pin", "merchant_number", "terminal_id", "location", "super_merchant_name", "merchant_name", "channel", "supported_currencies"):
-            value = payload.get(key)
-            if value not in (None, "", []):
-                metadata[key] = encrypt_local_secret(str(value)) if key == "merchant_pin" else value
-        metadata.setdefault("supported_currencies", ["USD", "ZWG"])
-    elif provider == "fnb":
-        for key in ("client_id", "account_id", "certificate_reference", "operation_paths", "capabilities", "supported_currencies"):
-            value = payload.get(key)
-            if value not in (None, "", [], {}):
-                metadata[key] = value
-        metadata.setdefault("supported_currencies", ["LSL"])
-        metadata.setdefault("capabilities", {
-            "collections": False, "payouts": False, "transfers": False,
-            "status": False, "reversals": False, "reconciliation": False,
-        })
-        metadata.setdefault("operation_paths", {})
-    elif provider == "paypal":
-        for key in ("client_id", "webhook_id", "brand_name", "supported_currencies", "card_enabled", "vault_enabled"):
-            value = payload.get(key)
-            if value not in (None, "", []):
-                metadata[key] = value
-        metadata.setdefault("supported_currencies", ["USD", "ZAR"])
-        metadata.setdefault("card_enabled", False)
-        metadata.setdefault("vault_enabled", False)
-        metadata.setdefault("brand_name", "Ithute Pay Bridge")
     row.metadata_json = metadata
 
     db.add(row)
