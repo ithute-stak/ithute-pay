@@ -257,8 +257,10 @@ def test_incoming_reconciliation_requires_and_persists_actual_cost_evidence():
         assert db.scalar(select(func.count(JournalEntry.id))) == 0
         assert reconcile_authenticated_query(db, **fund,
             cost_observation=ProviderCostObservation("mpesa","c2b-f","LSL","XXXX","1000","10","990")) == "succeeded"
+        assert reconcile_authenticated_query(db, **fund,
+            cost_observation=ProviderCostObservation("mpesa","c2b-f","LSL","XXXX","1000.00","10.00","990.00")) == "succeeded"
         assert db.scalar(select(func.count(JournalEntry.id))) == 2
-        assert row.quote_snapshot["verified_provider_costs"]["funding"]["net"] == "990"
+        assert row.quote_snapshot["verified_provider_costs"]["funding"]["net"] == "990.00"
         reserve_operation(db, **ids, leg="onward", reference="c2b-pay")
         bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="YYYY")
         pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="YYYY",

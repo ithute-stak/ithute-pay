@@ -243,3 +243,26 @@ def test_incoming_refund_reservation_fails_closed_before_cost_recovery_policy():
         assert db.scalar(select(func.count(MpesaPassThroughOperationIntent.id)).where(
             MpesaPassThroughOperationIntent.transaction_id == row.id,
             MpesaPassThroughOperationIntent.leg == "refund")) == 0
+
+
+@pytest.mark.parametrize("recovered,transfer_cost,shortfall", [
+    ("0", "0", "10"), ("10", "0", "0"), ("10", "2", "2"), ("5", "1", "6"),
+])
+def test_incoming_refund_capacity_never_authorizes_execution(recovered, transfer_cost, shortfall):
+    from services.mpesa_pass_through_accounting import preview_incoming_refund_capacity
+    q = quote(tenant_id="merchant", direction="incoming", principal="1000", approved=True)
+    result = preview_incoming_refund_capacity(q, actual_provider_cost=Decimal("10"),
+        actual_master_credit=Decimal("990"), recovered_provider_fee=Decimal(recovered),
+        refund_transfer_cost=Decimal(transfer_cost))
+    assert result["shortfall"] == Decimal(shortfall)
+    assert result["recognized_revenue"] == Decimal("0")
+    assert result["refund_execution_authorized"] is False
+
+
+def test_incoming_refund_rejects_excess_fee_recovery():
+    from services.mpesa_pass_through_accounting import preview_incoming_refund_capacity
+    q = quote(tenant_id="merchant", direction="incoming", principal="1000", approved=True)
+    with pytest.raises(TransactionError, match="exceeds"):
+        preview_incoming_refund_capacity(q, actual_provider_cost=Decimal("10"),
+            actual_master_credit=Decimal("990"), recovered_provider_fee=Decimal("11"),
+            refund_transfer_cost=Decimal("0"))

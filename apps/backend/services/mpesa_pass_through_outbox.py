@@ -42,6 +42,10 @@ def reserve_operation(
     if row.direction == "incoming" and leg == "refund":
         raise TransactionError("Incoming refund requires verified provider cost recovery policy")
 
+    if leg == "refund" and (row.provider_cost != 0 or
+            (row.quote_snapshot or {}).get("fee_payer") != "tenant"):
+        raise TransactionError("Refund requires certified provider cost and payer policy")
+
     existing = db.scalar(select(MpesaPassThroughOperationIntent).where(
         MpesaPassThroughOperationIntent.transaction_id == row.id,
         MpesaPassThroughOperationIntent.leg == leg,

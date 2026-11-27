@@ -246,3 +246,26 @@ def post_verified_incoming(db: Session, *, merchant_id: str, application_id: str
                 ("gateway_fee_revenue", ZERO, fee, "Agreed incoming service fee"),
             ]))
     return entries
+
+
+def preview_incoming_refund_capacity(quote, *, actual_provider_cost: Decimal,
+                                     actual_master_credit: Decimal,
+                                     recovered_provider_fee: Decimal,
+                                     refund_transfer_cost: Decimal) -> dict[str, Decimal | bool]:
+    """Non-posting capacity assessment, not authority to issue any refund.
+
+    Recovered fee must be cash already credited, not an expected reversal.
+    External evidence and responsibility for any shortfall remain mandatory.
+    """
+    allocation = preview_incoming_allocation(quote,
+        actual_provider_cost=actual_provider_cost, actual_master_credit=actual_master_credit)
+    for amount in (recovered_provider_fee, refund_transfer_cost):
+        if not isinstance(amount, Decimal) or not amount.is_finite() or amount < ZERO or amount != money(amount):
+            raise TransactionError("Invalid refund cost evidence")
+    if recovered_provider_fee > actual_provider_cost:
+        raise TransactionError("Recovered fee exceeds original provider deduction")
+    available = allocation["master_net_credit"] + recovered_provider_fee
+    required = allocation["gross_customer_payment"] + refund_transfer_cost
+    return {"available_funds": available, "required_funds": required,
+            "shortfall": max(ZERO, required - available),
+            "recognized_revenue": ZERO, "refund_execution_authorized": False}

@@ -92,7 +92,7 @@ def reconcile_authenticated_query(
         record = {"provider_id": attested.transaction_id,
                   "movement_digest": evidence_digest(attested),
                   "cost_digest": sha256(verified.canonical_evidence).hexdigest(),
-                  "fee": str(verified.deducted_fee), "net": str(verified.net_credit)}
+                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f")}
         if leg in costs and costs[leg] != record:
             raise TransactionError("Conflicting provider cost evidence")
         costs[leg] = record
