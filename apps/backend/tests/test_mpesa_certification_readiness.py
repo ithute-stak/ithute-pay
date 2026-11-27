@@ -75,3 +75,33 @@ def test_claimed_provider_references_do_not_trigger_actual_authentication():
 def test_invalid_evidence_structures_fail_closed(field):
     with pytest.raises(ValueError, match="mapping"):
         assess(**{field: None})
+
+
+def test_pass_through_sandbox_preflight_missing_config_is_read_only():
+    from unittest.mock import Mock
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+    db = Mock()
+    db.scalars.return_value.all.return_value = []
+    result = assess_pass_through_sandbox_configuration(db)
+    assert not result["configuration_complete"]
+    assert not result["dispatch_authorized"]
+    assert len(result["required_cases"]) == 10
+    db.add.assert_not_called()
+    db.commit.assert_not_called()
+
+
+def test_pass_through_sandbox_preflight_reports_missing_credentials():
+    from unittest.mock import Mock
+    from types import SimpleNamespace
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+    db = Mock()
+    db.scalars.return_value.all.return_value = [SimpleNamespace(
+        enabled=True, mode="simulator", api_key_ciphertext=None, public_key=None,
+        service_provider_code=None, origin=None, country="LES", currency="LSL",
+        market="vodacomLES", metadata_json={})]
+    result = assess_pass_through_sandbox_configuration(db)
+    assert "missing_sandbox_credentials" in result["configuration_blockers"]
+    assert "sandbox_provider_access_not_enabled" in result["configuration_blockers"]
+    assert not result["provider_credentials_authenticated"]
+    assert not result["production_configuration_changed"]
+    db.commit.assert_not_called()

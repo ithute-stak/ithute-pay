@@ -93,3 +93,46 @@ def assess_mpesa_sandbox_certification(
             "Independently authenticate every submitted reference with M-PESA and obtain formal authorization"
         ),
     }
+
+
+PASS_THROUGH_CASES = (
+    "c2b_customer_funding", "c2b_merchant_settlement",
+    "b2c_merchant_funding", "b2c_customer_settlement",
+    "b2b_sender_funding", "b2b_recipient_settlement",
+    "unknown_outcome_recovery", "duplicate_confirmation",
+    "failed_onward_refund", "reversal_investigation",
+)
+
+
+def assess_pass_through_sandbox_configuration(db) -> dict:
+    """Read-only preflight; never activate a provider or disclose credentials."""
+    from sqlalchemy import select
+    from database.models import GatewayProviderConfiguration
+    from integrations.mpesa.contracts import normalize_mpesa_capabilities
+    rows = db.scalars(select(GatewayProviderConfiguration).where(
+        GatewayProviderConfiguration.provider == "mpesa",
+        GatewayProviderConfiguration.environment == "sandbox",
+    )).all()
+    blockers = []
+    if len(rows) != 1:
+        blockers.append("exactly_one_sandbox_configuration_required")
+    else:
+        cfg = rows[0]
+        if not cfg.enabled or cfg.mode != "live":
+            blockers.append("sandbox_provider_access_not_enabled")
+        if not cfg.api_key_ciphertext or not cfg.public_key:
+            blockers.append("missing_sandbox_credentials")
+        if not cfg.service_provider_code or not cfg.origin:
+            blockers.append("missing_sandbox_account_identity")
+        if cfg.country != "LES" or cfg.currency != "LSL" or cfg.market != "vodacomLES":
+            blockers.append("sandbox_market_mismatch")
+        capabilities = normalize_mpesa_capabilities((cfg.metadata_json or {}).get("capabilities"))
+        # Capability declarations are local configuration, not provider approval.
+        if not capabilities.get("query"):
+            blockers.append("missing_configured_query_capability")
+    return {"environment": "sandbox", "configuration_blockers": blockers,
+            "configuration_complete": not blockers,
+            "required_cases": list(PASS_THROUGH_CASES),
+            "provider_approval_verified": False,
+            "provider_credentials_authenticated": False,
+            "dispatch_authorized": False, "production_configuration_changed": False}
