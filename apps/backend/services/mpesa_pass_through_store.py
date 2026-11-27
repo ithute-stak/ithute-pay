@@ -41,6 +41,7 @@ def _restore(row: MpesaPassThroughTransaction) -> PassThrough:
         funding_amount=row.funding_amount,
         onward_amount=row.onward_amount,
         fee_payer=str(snapshot["fee_payer"]),
+        transaction_type=snapshot.get("transaction_type"),
     )
     legs = {}
     for name in ("funding", "onward", "refund"):

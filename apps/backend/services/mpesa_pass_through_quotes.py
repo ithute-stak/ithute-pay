@@ -55,12 +55,14 @@ class Quote:
     funding_amount: Decimal
     onward_amount: Decimal
     fee_payer: str
+    transaction_type: str | None = None
 
     def payload(self) -> dict[str, str | int]:
         return {
             "tenant_id": self.tenant_id,
             "agreement_version": self.agreement_version,
             "direction": self.direction,
+            "transaction_type": self.transaction_type or ("c2b" if self.direction == "incoming" else "b2c"),
             "principal": str(self.principal),
             "provider_cost": str(self.provider_cost),
             "ithutepay_fee": str(self.ithutepay_fee),
@@ -78,6 +80,7 @@ def quote(
     direction: str,
     principal: object,
     agreement_version: int = 1,
+    transaction_type: str | None = None,
     incoming_rate: Rate = Rate(),
     outgoing_rate: Rate = Rate(percent=Decimal("2")),
     provider_incoming_rate: Rate = Rate(percent=Decimal("1")),
@@ -92,6 +95,9 @@ def quote(
         raise ValueError("Invalid tenant or agreement")
     if direction not in {"incoming", "outgoing"}:
         raise ValueError("Unsupported direction")
+    kind = transaction_type if transaction_type is not None else ("c2b" if direction == "incoming" else "b2c")
+    if {"c2b": "incoming", "b2c": "outgoing", "b2b": "outgoing"}.get(kind) != direction:
+        raise ValueError("Transaction type and direction mismatch")
     if provider_cost_payer not in {"tenant", "ithute"}:
         raise ValueError("Invalid provider cost payer")
     amount = money(principal)
@@ -111,11 +117,11 @@ def quote(
 
     return Quote(
         tenant_id, agreement_version, direction, amount, cost,
-        ithute, funding, onward, provider_cost_payer,
+        ithute, funding, onward, provider_cost_payer, kind,
     )
 
 
-def quote_from_agreement(tenant_id: str, direction: str, principal: object, agreement: object) -> Quote:
+def quote_from_agreement(tenant_id: str, direction: str, principal: object, agreement: object, *, transaction_type: str | None = None) -> Quote:
     """Adapt an already-authorized MerchantCommercialAgreement; caller checks tenancy.
 
     Deliberately does not query the database or take an untrusted merchant ID
@@ -131,6 +137,7 @@ def quote_from_agreement(tenant_id: str, direction: str, principal: object, agre
     return quote(
         tenant_id=tenant_id, direction=direction, principal=principal,
         agreement_version=int(getattr(agreement, "version")),
+        transaction_type=transaction_type,
         incoming_rate=tariff if direction == "incoming" else Rate(),
         outgoing_rate=tariff if direction == "outgoing" else Rate(percent=Decimal("2")),
         provider_cost_payer=str(getattr(agreement, "provider_cost_payer")),

@@ -99,3 +99,35 @@ def test_approved_zero_fee_override(direction):
     assert q.ithutepay_fee == Decimal("0.00")
     assert q.funding_amount == Decimal("1000.00")
     assert q.onward_amount == Decimal("990.00" if direction == "incoming" else "1000.00")
+
+
+@pytest.mark.parametrize("kind,direction,funding,onward,fee,cost", [
+    ("c2b", "incoming", "1000", "980", "10", "10"),
+    ("b2c", "outgoing", "1020", "1000", "20", "0"),
+    ("b2b", "outgoing", "1020", "1000", "20", "0"),
+])
+def test_recipient_amount_by_transaction_type(kind, direction, funding, onward, fee, cost):
+    q = quote(tenant_id="sender", direction=direction, transaction_type=kind,
+              principal="1000", approved=True)
+    assert q.funding_amount == Decimal(funding)
+    assert q.onward_amount == Decimal(onward)
+    assert q.ithutepay_fee == Decimal(fee)
+    assert q.provider_cost == Decimal(cost)
+    assert q.payload()["transaction_type"] == kind
+
+
+@pytest.mark.parametrize("kind,direction", [("b2b","incoming"), ("b2c","incoming"), ("c2b","outgoing"), ("invalid","outgoing")])
+def test_transaction_type_cannot_select_wrong_tariff(kind, direction):
+    with pytest.raises(ValueError):
+        quote(tenant_id="sender", direction=direction, transaction_type=kind,
+              principal="1000", approved=True)
+
+
+def test_b2b_sender_agreement_and_provider_cost_preserve_full_recipient_amount():
+    q = quote(tenant_id="sender", direction="outgoing", transaction_type="b2b",
+              principal="1000", approved=True, outgoing_rate=Rate(percent=Decimal("0.75")),
+              provider_outgoing_rate=Rate(percent=Decimal("1")))
+    assert q.onward_amount == Decimal("1000")
+    assert q.ithutepay_fee == Decimal("7.50")
+    assert q.provider_cost == Decimal("10")
+    assert q.funding_amount == Decimal("1017.50")
