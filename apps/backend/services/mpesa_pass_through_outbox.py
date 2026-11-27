@@ -303,3 +303,35 @@ def describe_provider_execution(db: Session, *, merchant_id: str, application_id
     return {"adapter_method": method, "reference": intent.reference,
             "amount": format(intent.amount, ".2f"), "currency": intent.currency,
             "dispatch_authorized": False, "provider_called": False}
+
+
+def build_sandbox_adapter_arguments(db: Session, *, merchant_id: str, application_id: str,
+                                    transaction_id: str, leg: str) -> dict:
+    """Offline wire argument construction; no client, network or dispatch authority.
+
+    Reject references that the existing adapter would truncate. A later
+    certified sender must verify credential ownership and claim atomically.
+    """
+    from database.models.mpesa_pass_through_identity import MpesaPassThroughLegIdentity
+    plan = describe_provider_execution(db, merchant_id=merchant_id,
+        application_id=application_id, transaction_id=transaction_id, leg=leg)
+    ref = plan["reference"]
+    if len(ref) > 20 or not ref.isascii() or not ref.replace("-", "").replace("_", "").isalnum():
+        raise TransactionError("Unsafe adapter reference; truncation forbidden")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == transaction_id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg,
+        MpesaPassThroughOperationIntent.reference == ref))
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    method = plan["adapter_method"]
+    party = binding.source_party if method == "collect" else binding.destination_party
+    shortcode = binding.destination_party if method == "collect" else binding.source_party
+    args = {"amount": Decimal(plan["amount"]), "currency": plan["currency"],
+            "transaction_reference": ref, "third_party_conversation_id": ref,
+            "description": "IthutePay pass-through"}
+    args["receiver_party_code" if method == "transfer" else "phone"] = party
+    return {"adapter_method": method, "required_shortcode": shortcode,
+            "arguments": args, "dispatch_authorized": False}

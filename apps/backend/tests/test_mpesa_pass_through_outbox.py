@@ -261,3 +261,34 @@ def test_execution_preview_classifies_funding_without_dispatch():
         assert claim_sandbox_simulation(db, **args, reference="preview-f")
         with pytest.raises(TransactionError, match="unclaimed"):
             describe_provider_execution(db, **args)
+
+
+def test_adapter_arguments_preserve_reference_and_bound_receiver():
+    from services.mpesa_pass_through_outbox import build_sandbox_adapter_arguments
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from integrations.mpesa.client import MpesaClient
+    from inspect import signature
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "wire-arguments")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **args, reference="wire-f")
+        bind_leg_identity(db, **args, source_party="YYYY", destination_party="XXXX")
+        plan = build_sandbox_adapter_arguments(db, **args)
+        assert plan["required_shortcode"] == "YYYY"
+        assert plan["arguments"]["receiver_party_code"] == "XXXX"
+        assert plan["arguments"]["amount"] == Decimal("1020")
+        assert plan["arguments"]["transaction_reference"] == "wire-f"
+        assert plan["dispatch_authorized"] is False
+        signature(MpesaClient.transfer).bind(None, **plan["arguments"])
+
+
+def test_adapter_arguments_refuse_truncated_reference():
+    from services.mpesa_pass_through_outbox import build_sandbox_adapter_arguments
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "wire-too-long")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **args, reference="x" * 21)
+        bind_leg_identity(db, **args, source_party="YYYY", destination_party="XXXX")
+        with pytest.raises(TransactionError, match="truncation"):
+            build_sandbox_adapter_arguments(db, **args)
