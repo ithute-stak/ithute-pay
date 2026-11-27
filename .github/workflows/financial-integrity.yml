@@ -130,6 +130,7 @@ jobs:
             tests/test_postgres_financial_concurrency.py \
             tests/test_financial_integrity_posting.py \
             tests/test_payment_lifecycle.py \
+            tests/test_payment_operations_monitor.py \
             tests/test_provider_operation_reservation.py \
             tests/test_transfer_dispatch_claim.py \
             tests/test_settlement_single_dispatch.py \
