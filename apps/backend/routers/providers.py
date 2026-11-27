@@ -401,37 +401,3 @@ def mpesa_return(request: Request, db: Session = Depends(get_db)):
     target = (config.redirect_url if config and config.redirect_url else default_provider_urls()["redirect_url"])
     query = urlencode(list(request.query_params.multi_items()))
     return RedirectResponse(f"{target}{'?' if query else ''}{query}", status_code=302)
-
-
-@router.post("/ecocash")
-async def ecocash_callback(request: Request, db: Session = Depends(get_db)):
-    payload = await _json_payload(request)
-    correlator = str(payload.get("clientCorrelator") or payload.get("referenceCode") or "")
-    if not correlator:
-        raise HTTPException(status_code=400, detail="Missing clientCorrelator")
-    status_value = str(payload.get("status") or payload.get("transactionOperationStatus") or "").upper()
-    message = str(payload.get("statusMessage") or status_value)
-    success = status_value in {"SUCCESS", "SUCCEEDED", "CHARGED", "REFUNDED", "REVERSED"} or "SUCCESS" in message.upper()
-    pending = status_value in {"PENDING", "PROCESSING", "AWAITING_CUSTOMER"}
-    result = ProviderResult(
-        accepted=success or pending,
-        status="succeeded" if success else "processing" if pending else "failed",
-        response_code=str(payload.get("statusCode") or ""),
-        response_description=message,
-        conversation_id=correlator,
-        transaction_id=str(payload.get("transactionId") or payload.get("ecocashReference") or "") or None,
-        third_party_conversation_id=correlator,
-        raw=payload,
-        reversed=status_value in {"REFUNDED", "REVERSED"},
-    )
-    tx = db.scalar(select(ProviderTransaction).where(ProviderTransaction.third_party_conversation_id == correlator))
-    if tx:
-        apply_provider_result(db, transaction=tx, result=result)
-    log = ProviderCallbackLog(
-        provider="ecocash", callback_type="notification", third_party_conversation_id=correlator,
-        payload_hash=_callback_hash("ecocash", payload), raw_payload=payload,
-        remote_address=request.client.host if request.client else None, processing_status="processed" if tx else "unmatched",
-    )
-    db.add(log)
-    db.commit()
-    return {"received": True, "clientCorrelator": correlator}

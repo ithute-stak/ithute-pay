@@ -6,7 +6,6 @@ import {
   BookOpenText,
   Building2,
   Cable,
-  CreditCard,
   FlaskConical,
   KeyRound,
   Landmark,
@@ -25,7 +24,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 
-export type ProviderId = "mpesa" | "ecocash" | "fnb" | "paypal";
+export type ProviderId = "mpesa";
 
 export type ProviderWorkspace = {
   id: ProviderId;
@@ -68,58 +67,7 @@ export const PROVIDER_WORKSPACES: ProviderWorkspace[] = [
       { href: "/dashboard/testing", label: "M-Pesa test lab", description: "Test M-Pesa services, including Query Transaction Status, in one sandbox workspace.", icon: FlaskConical },
     ],
   },
-  {
-    id: "ecocash",
-    name: "EcoCash Zimbabwe",
-    shortName: "EcoCash",
-    category: "Mobile money",
-    country: "Zimbabwe",
-    description: "EcoCash Instant Payment operations, provider configuration, transaction tracing and provider-specific sandbox tests.",
-    statusLabel: "Instant Payment workspace",
-    icon: Smartphone,
-    accentClass: "from-amber-500/15 via-white to-yellow-50",
-    services: [
-      { href: "/dashboard/provider", label: "Provider overview", description: "Understand EcoCash configuration, supported flows and next actions.", icon: LayoutDashboard },
-      { href: "/dashboard/payments", label: "Collections", description: "View customer payments routed through EcoCash.", icon: WalletCards },
-      { href: "/dashboard/transactions", label: "Transactions", description: "Inspect EcoCash provider references and statuses.", icon: Activity },
-      { href: "/dashboard/reconciliation", label: "Reconciliation", description: "Resolve delayed or uncertain EcoCash transactions.", icon: ArrowLeftRight },
-      { href: "/dashboard/testing/ecocash", label: "EcoCash test lab", description: "Run EcoCash-specific simulator and sandbox scenarios.", icon: FlaskConical },
-    ],
-  },
-  {
-    id: "fnb",
-    name: "FNB Lesotho",
-    shortName: "FNB",
-    category: "Bank rail",
-    country: "Lesotho",
-    description: "Bank-rail workspace for FNB configuration, transaction visibility and contracted integration operations.",
-    statusLabel: "Bank integration workspace",
-    icon: Landmark,
-    accentClass: "from-cyan-500/15 via-white to-sky-50",
-    services: [
-      { href: "/dashboard/provider", label: "Provider overview", description: "Review FNB readiness, credentials and supported bank operations.", icon: LayoutDashboard },
-      { href: "/dashboard/transactions", label: "Transactions", description: "View provider-side bank movements and statuses.", icon: Activity },
-      { href: "/dashboard/reconciliation", label: "Reconciliation", description: "Match bank and Pay Bridge records.", icon: ArrowLeftRight },
-      { href: "/dashboard/documentation", label: "Integration guide", description: "Review API and integration guidance before enabling live traffic.", icon: BookOpenText },
-    ],
-  },
-  {
-    id: "paypal",
-    name: "PayPal",
-    shortName: "PayPal",
-    category: "Online payments",
-    country: "International",
-    description: "Online payment workspace for PayPal checkout flows, transaction visibility and provider configuration.",
-    statusLabel: "Online payments workspace",
-    icon: CreditCard,
-    accentClass: "from-blue-500/15 via-white to-indigo-50",
-    services: [
-      { href: "/dashboard/provider", label: "Provider overview", description: "Review PayPal setup and available online payment actions.", icon: LayoutDashboard },
-      { href: "/dashboard/checkout", label: "Checkout & links", description: "Manage hosted checkout and payment-link experiences.", icon: CreditCard },
-      { href: "/dashboard/transactions", label: "Transactions", description: "Inspect PayPal payment movement and gateway state.", icon: Activity },
-      { href: "/dashboard/reconciliation", label: "Reconciliation", description: "Match PayPal and Pay Bridge transaction records.", icon: ArrowLeftRight },
-    ],
-  },
+
 ];
 
 export const PLATFORM_NAV = [

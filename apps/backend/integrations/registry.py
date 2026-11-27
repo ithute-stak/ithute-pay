@@ -6,10 +6,6 @@ from sqlalchemy.orm import Session
 
 from database.models import Application, ProviderConfiguration
 from integrations.simulator import SimulatorProvider
-from providers.ecocash.factory import build_application_provider as build_ecocash_application_provider
-from providers.ecocash.factory import build_gateway_provider as build_ecocash_gateway_provider
-from providers.fnb.factory import build_application_provider as build_fnb_application_provider
-from providers.fnb.factory import build_gateway_provider as build_fnb_gateway_provider
 from providers.mpesa.factory import build_application_provider as build_mpesa_application_provider
 from providers.mpesa.factory import build_default_provider as build_default_mpesa_provider
 from providers.mpesa.factory import build_gateway_provider as build_mpesa_gateway_provider
@@ -20,14 +16,6 @@ PROVIDER_BUILDERS = {
     "mpesa": {
         "gateway": build_mpesa_gateway_provider,
         "application": build_mpesa_application_provider,
-    },
-    "ecocash": {
-        "gateway": build_ecocash_gateway_provider,
-        "application": build_ecocash_application_provider,
-    },
-    "fnb": {
-        "gateway": build_fnb_gateway_provider,
-        "application": build_fnb_application_provider,
     },
 }
 
@@ -93,12 +81,7 @@ def get_provider(name: str, *, db: Session | None = None, application_id: str | 
     if config is not None:
         if config.mode == "simulator":
             return SimulatorProvider()
-        if normalized == "mpesa":
-            return builders["application"](config, application_id=application_id)
-        return builders["application"](config)
-
-    if normalized in {"fnb", "ecocash"}:
-        return SimulatorProvider()
+        return builders["application"](config, application_id=application_id)
 
     default_provider = build_default_mpesa_provider()
     return default_provider or SimulatorProvider()

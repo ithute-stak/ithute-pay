@@ -34,10 +34,9 @@ from database.schemas.common import CustomerInput
 from database.schemas.finance import SettlementRequest
 from database.schemas.mandates import MandateChargeCreate, MandateCreate
 from database.schemas.payments import PaymentIntentCreate, PayoutCreate, TransferCreate
-from database.schemas.testing import EcoCashSandboxRequest, SandboxRunAllRequest, SandboxTestRequest
+from database.schemas.testing import SandboxRunAllRequest, SandboxTestRequest
 from database.session import get_db
 from integrations.mpesa.client import MpesaClient, MpesaError, MpesaRuntimeConfig
-from integrations.ecocash.client import EcoCashClient
 from integrations.registry import get_provider
 from routers import authorizations as authorization_routes
 from routers import checkout as checkout_routes
@@ -1103,84 +1102,3 @@ def history(limit: int = 50, db: Session = Depends(get_db), _: User = Depends(pl
         }
         for row in rows
     ]
-
-
-@router.get("/ecocash/catalog")
-def ecocash_catalog(db: Session = Depends(get_db), _: User = Depends(platform_admin)):
-    config = active_gateway_provider_configuration(db, "ecocash")
-    missing: list[str] = []
-    if not config:
-        missing.append("active EcoCash provider")
-    elif config.environment != "sandbox":
-        missing.append("active EcoCash provider must be Sandbox")
-    elif config.mode != "live":
-        missing.append("connection mode must be Live API")
-    if config:
-        meta = config.metadata_json or {}
-        if not meta.get("username"): missing.append("username")
-        if not config.api_key_ciphertext: missing.append("password")
-        if not meta.get("merchant_code"): missing.append("merchant code")
-        if not meta.get("merchant_pin"): missing.append("merchant PIN")
-        if not meta.get("merchant_number"): missing.append("merchant number")
-    return {
-        "provider": "ecocash",
-        "simulator": {"ready": True, "network": False},
-        "live_sandbox": {
-            "ready": not missing,
-            "missing": missing,
-            "base_url": config.base_url if config else "https://developers.ecocash.co.zw/sandbox/payment/v1",
-            "country": config.country if config else "ZWE",
-            "currencies": (config.metadata_json or {}).get("supported_currencies", ["USD", "ZWG"]) if config else ["USD", "ZWG"],
-            "callback_url": config.callback_url if config else None,
-        },
-        "operations": ["charge", "lookup", "refund"],
-        "scenarios": ["success", "insufficient_funds", "invalid_pin", "limit_exceeded", "pending"],
-    }
-
-
-@router.post("/ecocash/run")
-async def run_ecocash_test(payload: EcoCashSandboxRequest, db: Session = Depends(get_db), _: User = Depends(platform_admin)):
-    correlator = payload.client_correlator or f"ECO-{int(time.time())}-{secrets.token_hex(3).upper()}"
-    if payload.execution_mode == "simulator":
-        statuses = {
-            "success": ("succeeded", "200", "Transaction Successful"),
-            "insufficient_funds": ("failed", "E010", "Insufficient Balance"),
-            "invalid_pin": ("failed", "E006", "Transaction Failed - Invalid PIN"),
-            "limit_exceeded": ("failed", "E013", "Transaction Limit Exceeded"),
-            "pending": ("processing", "200", "PENDING"),
-        }
-        status, code, message = statuses[payload.scenario]
-        return {
-            "provider": "ecocash", "execution_mode": "simulator", "network_request_sent": False,
-            "operation": payload.operation, "status": status, "passed": True,
-            "request": payload.model_dump(mode="json"),
-            "response": {"clientCorrelator": correlator, "statusCode": code, "statusMessage": message, "status": status.upper()},
-            "executed_at": utcnow().isoformat(),
-        }
-
-    config = active_gateway_provider_configuration(db, "ecocash")
-    if not config or config.environment != "sandbox" or config.mode != "live":
-        raise HTTPException(status_code=409, detail="Active EcoCash Sandbox Live API configuration is required")
-    client = get_provider("ecocash", db=db)
-    if not isinstance(client, EcoCashClient):
-        raise HTTPException(status_code=409, detail="EcoCash live client is not active")
-    if payload.operation == "charge":
-        result = await client.collect(amount=payload.amount, currency=payload.currency, phone=payload.phone,
-            transaction_reference=f"LAB-{correlator}"[:100], third_party_conversation_id=correlator,
-            description=f"EcoCash sandbox {payload.scenario}")
-    elif payload.operation == "lookup":
-        result = await client.query(query_reference=f"{payload.phone}|{correlator}", third_party_conversation_id=correlator)
-    else:
-        if not payload.original_ecocash_reference:
-            raise HTTPException(status_code=422, detail="original_ecocash_reference is required for refund")
-        packed = f"{payload.original_ecocash_reference}|{payload.phone}|{payload.currency}|REF-{correlator}"
-        result = await client.reverse(transaction_id=packed, third_party_conversation_id=correlator, amount=payload.amount)
-    return {
-        "provider": "ecocash", "execution_mode": "live_sandbox", "network_request_sent": True,
-        "operation": payload.operation, "status": result.status, "passed": result.accepted,
-        "endpoint": config.base_url, "request": payload.model_dump(mode="json"),
-        "response": result.raw, "provider_response_code": result.response_code,
-        "provider_response_description": result.response_description,
-        "provider_transaction_id": result.transaction_id,
-        "client_correlator": correlator, "executed_at": utcnow().isoformat(),
-    }

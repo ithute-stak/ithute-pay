@@ -3,7 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from decimal import Decimal
 from typing import Any
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, Field, model_validator, field_validator
 from database.schemas.common import CustomerInput, ORMModel
 
 
@@ -12,6 +12,14 @@ class PaymentIntentCreate(BaseModel):
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     payment_method: str = "mobile_money"
     provider: str = "mpesa"
+
+    @field_validator("provider")
+    @classmethod
+    def approved_provider(cls, value: str) -> str:
+        if value.strip().lower() != "mpesa":
+            raise ValueError("Only M-PESA is an approved payment provider")
+        return "mpesa"
+
     customer: CustomerInput
     reference: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)
@@ -70,6 +78,14 @@ class PayoutCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     provider: str = "mpesa"
+
+    @field_validator("provider")
+    @classmethod
+    def approved_provider(cls, value: str) -> str:
+        if value.strip().lower() != "mpesa":
+            raise ValueError("Only M-PESA is an approved payment provider")
+        return "mpesa"
+
     destination_phone: str = Field(min_length=8, max_length=20)
     reference: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)
@@ -117,6 +133,14 @@ class TransferCreate(BaseModel):
     amount: Decimal = Field(gt=0)
     currency: str = Field(default="LSL", min_length=3, max_length=3)
     provider: str = "mpesa"
+
+    @field_validator("provider")
+    @classmethod
+    def approved_provider(cls, value: str) -> str:
+        if value.strip().lower() != "mpesa":
+            raise ValueError("Only M-PESA is an approved payment provider")
+        return "mpesa"
+
     receiver_party_code: str = Field(min_length=4, max_length=12)
     reference: str = Field(min_length=1, max_length=100)
     description: str | None = Field(default=None, max_length=255)

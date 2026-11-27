@@ -12,7 +12,6 @@ from database.models import (
     Reversal, SettlementInstruction, Transfer,
 )
 from integrations.base import ProviderResult
-from integrations.ecocash.contracts import normalize_ecocash_msisdn
 from integrations.mpesa.contracts import require_provider_capability
 from integrations.registry import get_provider
 from services.events import publish_event
@@ -45,19 +44,14 @@ def _resource_event_prefix(resource_type: str) -> str:
     return {"payment_intent":"payment","mandate_charge":"mandate.charge","payout":"payout","transfer":"transfer"}[resource_type]
 
 
+def _require_mpesa_provider(provider_name: str) -> None:
+    if provider_name.strip().lower() != "mpesa":
+        raise HTTPException(status_code=409, detail="Only M-PESA is an approved payment provider")
+
+
 def _provider_phone(provider_name: str, phone: str) -> str:
-    return normalize_ecocash_msisdn(phone) if provider_name.lower() == "ecocash" else normalize_msisdn(phone)
-
-
-def _ecocash_end_user_id(db: Session, transaction: ProviderTransaction) -> str:
-    raw = transaction.raw_response or {}
-    if isinstance(raw, dict) and raw.get("endUserId"):
-        return normalize_ecocash_msisdn(str(raw["endUserId"]))
-    if transaction.resource_type == "payment_intent":
-        payment = db.get(PaymentIntent, transaction.resource_id)
-        if payment and payment.customer_phone:
-            return normalize_ecocash_msisdn(payment.customer_phone)
-    raise HTTPException(status_code=409, detail="EcoCash transaction is missing the original endUserId needed for lookup/refund")
+    _require_mpesa_provider(provider_name)
+    return normalize_msisdn(phone)
 
 
 def _transaction_resource(db: Session, transaction: ProviderTransaction):
@@ -520,6 +514,7 @@ async def execute_transfer(db: Session, transfer: Transfer) -> Transfer:
 
 
 async def refresh_provider_transaction(db: Session, transaction: ProviderTransaction) -> ProviderTransaction:
+    _require_mpesa_provider(transaction.provider)
     resource = _transaction_resource(db, transaction)
     provider = (
         provider_for_resource(db, resource, provider_name=transaction.provider, application_id=transaction.application_id)
@@ -527,7 +522,7 @@ async def refresh_provider_transaction(db: Session, transaction: ProviderTransac
         else get_provider(transaction.provider,db=db,application_id=transaction.application_id)
     )
     require_provider_capability(provider,"query")
-    query_ref=(f"{_ecocash_end_user_id(db,transaction)}|{transaction.third_party_conversation_id}" if transaction.provider=="ecocash" else transaction.provider_transaction_id or transaction.conversation_id or transaction.third_party_conversation_id)
+    query_ref=transaction.provider_transaction_id or transaction.conversation_id or transaction.third_party_conversation_id
     result=await provider.query(query_reference=query_ref,third_party_conversation_id=conversation_id())
     apply_provider_result(db,transaction=transaction,result=result); db.commit(); db.refresh(transaction); return transaction
 
@@ -569,7 +564,6 @@ async def reverse_transaction(db: Session, *, transaction: ProviderTransaction, 
     reversal=Reversal(public_id=public_id("rev"),application_id=application_id,merchant_id=merchant_id,provider_transaction_id=transaction.id,amount=reversal_amount,reason=reason,status="processing")
     db.add(reversal); db.flush(); operation=create_operation(db,merchant_id=merchant_id,application_id=application_id,provider=transaction.provider,operation_type="reversal",resource_type="reversal",resource_id=reversal.id); db.commit()
     provider_reference=transaction.provider_transaction_id
-    if transaction.provider=="ecocash": provider_reference="|".join([transaction.provider_transaction_id,_ecocash_end_user_id(db,transaction),transaction.currency,transaction.transaction_reference])
     result=await provider.reverse(transaction_id=provider_reference,third_party_conversation_id=operation.third_party_conversation_id,amount=reversal_amount)
     apply_operation_result(db,operation,result); reversal.status=result.status; reversal.provider_reversal_transaction_id=result.transaction_id
     if result.status=="succeeded": finalize_successful_reversal(db,reversal=reversal,transaction=transaction)

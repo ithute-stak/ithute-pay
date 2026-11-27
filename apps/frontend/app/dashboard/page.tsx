@@ -41,7 +41,7 @@ export default function DashboardPage() {
           <div>
             <p className="text-xs font-black uppercase tracking-[.16em] text-blue-100">Simple provider-first workflow</p>
             <h2 className="mt-2 text-xl font-black sm:text-2xl">One provider at a time, with the right tools in view</h2>
-            <p className="mt-2 max-w-3xl text-sm leading-6 text-blue-100">This keeps M-Pesa, EcoCash, FNB and PayPal operations from being mixed together. You can switch provider at any time from the top bar or sidebar.</p>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-blue-100">M-PESA is the approved payment provider. All payment operations use the direct M-PESA workspace.</p>
           </div>
           <div className="rounded-2xl bg-white/10 p-4 ring-1 ring-white/15">
             <p className="text-[10px] font-black uppercase tracking-[.15em] text-blue-100">How to start</p>

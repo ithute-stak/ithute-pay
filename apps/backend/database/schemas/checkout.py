@@ -47,8 +47,8 @@ class PublicCheckoutPay(BaseModel):
     @classmethod
     def normalize_provider(cls, value: str) -> str:
         normalized = value.strip().lower()
-        if not normalized.replace("_", "").isalnum():
-            raise ValueError("Invalid payment provider")
+        if normalized != "mpesa":
+            raise ValueError("Only M-PESA is an approved payment provider")
         return normalized
 
 

@@ -39,14 +39,3 @@ class SandboxTestRequest(BaseModel):
 class SandboxRunAllRequest(BaseModel):
     amount: Decimal = Field(default=Decimal("25.00"), gt=0, le=Decimal("1000000.00"))
     currency: str = Field(default="LSL", min_length=3, max_length=3)
-
-
-class EcoCashSandboxRequest(BaseModel):
-    execution_mode: Literal["simulator", "live_sandbox"] = "simulator"
-    operation: Literal["charge", "lookup", "refund"] = "charge"
-    scenario: Literal["success", "insufficient_funds", "invalid_pin", "limit_exceeded", "pending"] = "success"
-    amount: Decimal = Field(default=Decimal("5.00"), gt=0)
-    currency: Literal["USD", "ZWG"] = "USD"
-    phone: str = Field(min_length=8, max_length=20)
-    client_correlator: str | None = Field(default=None, max_length=100)
-    original_ecocash_reference: str | None = Field(default=None, max_length=160)

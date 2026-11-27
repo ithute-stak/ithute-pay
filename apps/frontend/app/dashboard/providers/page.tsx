@@ -9,11 +9,8 @@ import {
   Check,
   CheckCircle2,
   Copy,
-  CreditCard,
   Eye,
-  Globe2,
   KeyRound,
-  Landmark,
   Link2,
   RadioTower,
   Settings2,
@@ -35,7 +32,7 @@ import {
   useProviderCallbackLogsQuery,
 } from "@/store/gateway-api";
 
-type ProviderKey = "mpesa" | "fnb" | "ecocash" | "paypal";
+type ProviderKey = "mpesa";
 type ProviderTab = "catalogue" | "environments" | "configure" | "activity";
 type ConfigureStep = 1 | 2 | 3 | 4;
 
@@ -79,63 +76,7 @@ const PROVIDER_CATALOGUE: ProviderCatalogueItem[] = [
     country: "Lesotho",
     description: "Lesotho M-Pesa gateway. Live operations are restricted to the products enabled for the configured M-Pesa application.",
   },
-  {
-    id: "fnb",
-    provider: "fnb",
-    name: "FNB Lesotho",
-    category: "Bank rail",
-    country: "Lesotho",
-    description: "FNB adapter is present. Live collections remain guarded until the contracted payload and signing specification is configured.",
-  },
-  {
-    id: "standard-lesotho",
-    name: "Standard Lesotho Bank",
-    category: "Bank rail · roadmap",
-    country: "Lesotho",
-    description: "Visible in the gateway catalogue so the Lesotho banking roadmap is explicit. No live adapter is implemented yet.",
-    roadmap: true,
-  },
-  {
-    id: "nedbank-lesotho",
-    name: "Nedbank Lesotho",
-    category: "Bank rail · roadmap",
-    country: "Lesotho",
-    description: "Visible in the gateway catalogue. Provider onboarding and a contracted API adapter are still required.",
-    roadmap: true,
-  },
-  {
-    id: "lesotho-postbank",
-    name: "Lesotho PostBank",
-    category: "Bank rail · roadmap",
-    country: "Lesotho",
-    description: "Visible in the gateway catalogue. No production payment adapter is implemented yet.",
-    roadmap: true,
-  },
-  {
-    id: "ecocash",
-    provider: "ecocash",
-    name: "EcoCash Zimbabwe",
-    category: "Regional mobile money",
-    country: "Zimbabwe",
-    description: "Regional EcoCash rail with simulator and provider configuration support.",
-  },
-  {
-    id: "paypal",
-    provider: "paypal",
-    name: "PayPal",
-    category: "International wallet",
-    country: "International",
-    description: "PayPal-hosted checkout for supported international currencies.",
-  },
-  {
-    id: "card",
-    provider: "paypal",
-    name: "Debit / Credit Cards",
-    category: "Hosted cards via PayPal",
-    country: "International",
-    description: "Card details stay inside PayPal-hosted fields. This rail appears when card payments are enabled on the PayPal provider.",
-    cardRail: true,
-  },
+
 ];
 
 const PROVIDER_OPTIONS: Array<{
@@ -145,9 +86,6 @@ const PROVIDER_OPTIONS: Array<{
   icon: typeof Smartphone;
 }> = [
   { key: "mpesa", name: "M-Pesa Lesotho", description: "Vodacom Lesotho mobile money", icon: Smartphone },
-  { key: "fnb", name: "FNB Lesotho", description: "Bank payment rail", icon: Landmark },
-  { key: "ecocash", name: "EcoCash Zimbabwe", description: "Regional mobile money", icon: Smartphone },
-  { key: "paypal", name: "PayPal + Cards", description: "International wallet and hosted cards", icon: Globe2 },
 ];
 
 const WIZARD_STEPS: Array<{
@@ -206,49 +144,6 @@ const empty = {
 };
 
 function defaultsFor(provider: ProviderKey, environment: string) {
-  if (provider === "paypal") {
-    return {
-      ...empty,
-      provider,
-      environment,
-      mode: environment === "production" ? "live" : "simulator",
-      base_url: environment === "production" ? "https://api-m.paypal.com" : "https://api-m.sandbox.paypal.com",
-      market: "paypal",
-      country: "LES",
-      currency: "USD",
-      supported_currencies: ["USD", "ZAR"],
-    };
-  }
-  if (provider === "ecocash") {
-    return {
-      ...empty,
-      provider,
-      environment,
-      mode: environment === "production" ? "live" : "simulator",
-      base_url: environment === "production"
-        ? "https://developers.ecocash.co.zw/payment/v1"
-        : "https://developers.ecocash.co.zw/sandbox/payment/v1",
-      market: "ecocashZW",
-      country: "ZWE",
-      currency: "USD",
-      location: "Harare",
-      super_merchant_name: "EcoCash",
-      supported_currencies: ["USD", "ZWG"],
-    };
-  }
-  if (provider === "fnb") {
-    return {
-      ...empty,
-      provider,
-      environment,
-      mode: environment === "production" ? "live" : "simulator",
-      base_url: "",
-      market: "fnbLES",
-      country: "LES",
-      currency: "LSL",
-      supported_currencies: ["LSL"],
-    };
-  }
   return {
     ...empty,
     provider,
@@ -264,11 +159,8 @@ function defaultsFor(provider: ProviderKey, environment: string) {
   };
 }
 
-function providerIcon(item: ProviderCatalogueItem) {
-  if (item.cardRail) return <CreditCard className="h-5 w-5" />;
-  if (item.id === "mpesa" || item.id === "ecocash") return <Smartphone className="h-5 w-5" />;
-  if (item.id === "paypal") return <Globe2 className="h-5 w-5" />;
-  return <Landmark className="h-5 w-5" />;
+function providerIcon(_item: ProviderCatalogueItem) {
+  return <Smartphone className="h-5 w-5" />;
 }
 
 function providerLabel(provider: ProviderKey) {
@@ -295,7 +187,8 @@ function SummaryItem({ label, value }: { label: string; value?: ReactNode }) {
 }
 
 export default function Page() {
-  const { data: providers = [] } = useAdminProvidersQuery();
+  const { data: allProviders = [] } = useAdminProvidersQuery();
+  const providers = useMemo(() => allProviders.filter((row: any) => row.provider === "mpesa"), [allProviders]);
   const { data: callbacks = [] } = useProviderCallbackLogsQuery();
   const [save, { isLoading }] = useCreateProviderConfigMutation();
   const [activate, { isLoading: activating }] = useActivateProviderConfigMutation();
@@ -329,7 +222,6 @@ export default function Page() {
     if (item.roadmap) return "Adapter not implemented";
     const row = rowsFor(item).find((candidate: any) => candidate.environment === environment);
     if (!row) return "Not configured";
-    if (item.cardRail && !row.card_enabled) return "PayPal configured · cards off";
     if (row.active) return row.mode === "live" ? "Active · live" : "Active · simulator";
     return row.mode === "live" ? "Configured · live" : "Configured · simulator";
   }
@@ -338,13 +230,6 @@ export default function Page() {
     if (item.roadmap) return { label: "Not integrated", className: "bg-slate-100 text-slate-600" };
     const rows = rowsFor(item);
     const active = rows.find((row: any) => row.active);
-    if (item.cardRail) {
-      const enabled = rows.find((row: any) => row.card_enabled && row.active);
-      if (enabled) return { label: "Active via PayPal", className: "bg-emerald-50 text-emerald-700" };
-      if (rows.some((row: any) => row.card_enabled)) return { label: "Configured · inactive", className: "bg-amber-50 text-amber-700" };
-      if (rows.length) return { label: "Not enabled", className: "bg-slate-100 text-slate-600" };
-      return { label: "Not configured", className: "bg-slate-100 text-slate-600" };
-    }
     if (active) {
       return {
         label: active.mode === "live" ? `Active · ${active.environment}` : `Simulator · ${active.environment}`,
@@ -438,19 +323,6 @@ export default function Page() {
       }
       if (form.mode === "live" && !Object.values(form.capabilities || {}).some(Boolean)) {
         setFormError("Select at least one M-Pesa product that is enabled/approved for this application.");
-        setConfigureStep(2);
-        return;
-      }
-    }
-
-    if (form.provider === "fnb") {
-      try {
-        payload.operation_paths = form.operation_paths?.trim() ? JSON.parse(form.operation_paths) : {};
-        if (Array.isArray(payload.operation_paths) || typeof payload.operation_paths !== "object") {
-          throw new Error("Operation paths must be a JSON object");
-        }
-      } catch {
-        setFormError("FNB operation paths must be valid JSON, for example {\"collect\": \"/payments\"}.");
         setConfigureStep(2);
         return;
       }
@@ -611,13 +483,7 @@ export default function Page() {
                 columns={[
                   { key: "provider", label: "Provider", render: (r: any) => <div className="flex items-center gap-2"><Cable className="h-4 w-4 text-[#116fbb]"/><div><p className="font-bold uppercase text-[#082b4d]">{r.provider}</p><p className="text-xs text-slate-500">{r.market} · {r.country}/{r.currency}</p></div></div> },
                   { key: "environment", label: "Environment", render: (r: any) => <div><p className="font-semibold capitalize">{r.environment}</p><p className="text-xs text-slate-500">{r.mode}</p></div> },
-                  { key: "credentials", label: "Credentials", render: (r: any) => r.provider === "paypal"
-                    ? <div className="text-xs"><p>{r.client_id ? "Client ID configured" : "No Client ID"}</p><p>{r.has_client_secret ? "Client secret encrypted" : "No client secret"}</p><p>{r.card_enabled ? "Hosted cards enabled" : "PayPal wallet only"}</p></div>
-                    : r.provider === "ecocash"
-                      ? <div className="text-xs"><p>{r.has_username ? "Username stored" : "No username"}</p><p>{r.has_password ? "Password stored" : "No password"}</p><p>{r.has_merchant_pin ? "Merchant PIN stored" : "No merchant PIN"}</p></div>
-                      : r.provider === "fnb"
-                        ? <div className="text-xs"><p>{r.client_id ? "Client ID configured" : "No client ID"}</p><p>{r.has_client_secret ? "Client secret encrypted" : "No client secret"}</p><p>{r.account_id ? "Account configured" : "No account ID"}</p></div>
-                        : <div className="text-xs"><p>{r.has_api_key ? "API key stored" : "No API key"}</p><p>{r.has_public_key ? "Public key stored" : "No public key"}</p><p>{Object.values(r.capabilities || {}).filter(Boolean).length} products enabled</p></div> },
+                  { key: "credentials", label: "Credentials", render: (r: any) => <div className="text-xs"><p>{r.has_api_key ? "API key stored" : "No API key"}</p><p>{r.has_public_key ? "Public key stored" : "No public key"}</p><p>{Object.values(r.capabilities || {}).filter(Boolean).length} products enabled</p></div> },
                   {
                     key: "active",
                     label: "State",
@@ -869,64 +735,7 @@ export default function Page() {
                           </div>
                         </div>
                       </div>
-                    ) : form.provider === "paypal" ? (
-                      <div className="space-y-5">
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <Field label="PayPal REST Client ID" className="sm:col-span-2">
-                            <Input placeholder="REST Client ID" value={form.client_id || ""} onChange={(e)=>setForm({...form,client_id:e.target.value})}/>
-                          </Field>
-                          <Field label="PayPal REST Client Secret" className="sm:col-span-2" hint="Encrypted at rest. Leave blank when editing to keep the stored secret.">
-                            <Input type="password" autoComplete="new-password" placeholder="Enter only when adding or rotating the secret" value={form.client_secret || ""} onChange={(e)=>setForm({...form,client_secret:e.target.value})}/>
-                          </Field>
-                          <Field label="PayPal Webhook ID">
-                            <Input placeholder="Webhook ID" value={form.webhook_id || ""} onChange={(e)=>setForm({...form,webhook_id:e.target.value})}/>
-                          </Field>
-                          <Field label="Checkout brand name">
-                            <Input placeholder="Ithute Pay Bridge" value={form.brand_name || ""} onChange={(e)=>setForm({...form,brand_name:e.target.value})}/>
-                          </Field>
-                          <Field label="Supported currencies" className="sm:col-span-2" hint="Comma separated, for example USD, ZAR.">
-                            <Input placeholder="USD, ZAR" value={(form.supported_currencies || []).join(", ")} onChange={(e)=>setForm({...form,supported_currencies:e.target.value.split(",").map((x:string)=>x.trim().toUpperCase()).filter(Boolean)})}/>
-                          </Field>
-                        </div>
-                        <div className="grid gap-3 sm:grid-cols-2">
-                          <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${form.card_enabled ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-slate-50"}`}>
-                            <input className="mt-1" type="checkbox" checked={!!form.card_enabled} onChange={(e)=>setForm({...form,card_enabled:e.target.checked})}/>
-                            <span><span className="block text-sm font-bold text-[#082b4d]">Enable hosted card fields</span><span className="mt-1 block text-xs leading-4 text-slate-500">Card number and CVV remain inside PayPal-hosted fields.</span></span>
-                          </label>
-                          <label className={`flex cursor-pointer items-start gap-3 rounded-2xl border p-4 ${form.vault_enabled ? "border-blue-200 bg-blue-50/60" : "border-slate-200 bg-slate-50"}`}>
-                            <input className="mt-1" type="checkbox" checked={!!form.vault_enabled} onChange={(e)=>setForm({...form,vault_enabled:e.target.checked})}/>
-                            <span><span className="block text-sm font-bold text-[#082b4d]">Account approved for vaulting</span><span className="mt-1 block text-xs leading-4 text-slate-500">Enable only when PayPal has approved this account for vaulting.</span></span>
-                          </label>
-                        </div>
-                      </div>
-                    ) : form.provider === "fnb" ? (
-                      <div className="space-y-5">
-                        <div className="grid gap-4 sm:grid-cols-2">
-                          <Field label="Client ID"><Input placeholder="Client ID" value={form.client_id || ""} onChange={(e)=>setForm({...form,client_id:e.target.value})}/></Field>
-                          <Field label="Client secret" hint="Encrypted at rest. Leave blank to preserve the current secret."><Input type="password" autoComplete="new-password" placeholder="Client secret" value={form.client_secret || ""} onChange={(e)=>setForm({...form,client_secret:e.target.value})}/></Field>
-                          <Field label="Account ID"><Input placeholder="Account ID" value={form.account_id || ""} onChange={(e)=>setForm({...form,account_id:e.target.value})}/></Field>
-                          <Field label="Certificate reference"><Input placeholder="Certificate reference" value={form.certificate_reference || ""} onChange={(e)=>setForm({...form,certificate_reference:e.target.value})}/></Field>
-                          <Field label="Supported currencies" className="sm:col-span-2"><Input placeholder="LSL" value={(form.supported_currencies || []).join(", ")} onChange={(e)=>setForm({...form,supported_currencies:e.target.value.split(",").map((x:string)=>x.trim().toUpperCase()).filter(Boolean)})}/></Field>
-                          <Field label="Operation paths JSON" className="sm:col-span-2" hint={'Example: {"collect":"/payments","status":"/payments/{id}"}'}>
-                            <textarea className="min-h-36 w-full rounded-xl border border-slate-200 bg-white p-3 font-mono text-xs outline-none transition focus:border-blue-400 focus:ring-4 focus:ring-blue-100" placeholder={'{"collect":"/payments"}'} value={form.operation_paths || ""} onChange={(e)=>setForm({...form,operation_paths:e.target.value})}/>
-                          </Field>
-                        </div>
-                        <p className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-xs leading-5 text-amber-900">FNB can be configured here, but live collection capability remains guarded until the contracted Lesotho request schema, signing method and operation paths are installed and validated.</p>
-                      </div>
-                    ) : (
-                      <div className="grid gap-4 sm:grid-cols-2">
-                        <Field label="Basic Auth username"><Input placeholder="Username" value={form.username || ""} onChange={(e)=>setForm({...form,username:e.target.value})}/></Field>
-                        <Field label="Basic Auth password" hint="Encrypted at rest. Leave blank to keep the stored password."><Input type="password" autoComplete="new-password" placeholder="Password" value={form.password || ""} onChange={(e)=>setForm({...form,password:e.target.value})}/></Field>
-                        <Field label="Merchant code"><Input placeholder="Merchant code" value={form.merchant_code || ""} onChange={(e)=>setForm({...form,merchant_code:e.target.value})}/></Field>
-                        <Field label="Merchant PIN"><Input type="password" placeholder="Merchant PIN" value={form.merchant_pin || ""} onChange={(e)=>setForm({...form,merchant_pin:e.target.value})}/></Field>
-                        <Field label="Merchant number"><Input placeholder="Merchant number" value={form.merchant_number || ""} onChange={(e)=>setForm({...form,merchant_number:e.target.value})}/></Field>
-                        <Field label="Terminal ID"><Input placeholder="TERM001" value={form.terminal_id || ""} onChange={(e)=>setForm({...form,terminal_id:e.target.value})}/></Field>
-                        <Field label="Location"><Input placeholder="Harare" value={form.location || ""} onChange={(e)=>setForm({...form,location:e.target.value})}/></Field>
-                        <Field label="Channel"><Input placeholder="WEB" value={form.channel || ""} onChange={(e)=>setForm({...form,channel:e.target.value})}/></Field>
-                        <Field label="Super merchant name"><Input placeholder="EcoCash" value={form.super_merchant_name || ""} onChange={(e)=>setForm({...form,super_merchant_name:e.target.value})}/></Field>
-                        <Field label="Merchant name"><Input placeholder="Ithute Pay Bridge" value={form.merchant_name || ""} onChange={(e)=>setForm({...form,merchant_name:e.target.value})}/></Field>
-                      </div>
-                    )}
+                    ) : null}
                   </div>
                 )}
 
@@ -1002,18 +811,6 @@ export default function Page() {
                             <p className="flex justify-between gap-3"><span className="text-slate-500">Registered Origin</span><span className="font-semibold text-slate-800">{form.origin || "Not entered"}</span></p>
                             <p className="flex justify-between gap-3"><span className="text-slate-500">Enabled products</span><span className="font-semibold text-slate-800">{selectedCapabilities.length}</span></p>
                           </>}
-                          {form.provider === "paypal" && <>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Client ID</span><span className="font-semibold text-slate-800">{form.client_id ? "Configured" : "Not entered"}</span></p>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Hosted cards</span><span className="font-semibold text-slate-800">{form.card_enabled ? "Enabled" : "Disabled"}</span></p>
-                          </>}
-                          {form.provider === "fnb" && <>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Client ID</span><span className="font-semibold text-slate-800">{form.client_id ? "Configured" : "Not entered"}</span></p>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Account ID</span><span className="font-semibold text-slate-800">{form.account_id || "Not entered"}</span></p>
-                          </>}
-                          {form.provider === "ecocash" && <>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Username</span><span className="font-semibold text-slate-800">{form.username ? "Configured" : "Not entered"}</span></p>
-                            <p className="flex justify-between gap-3"><span className="text-slate-500">Merchant code</span><span className="font-semibold text-slate-800">{form.merchant_code || "Not entered"}</span></p>
-                          </>}
                         </div>
                       </div>
 
@@ -1084,9 +881,6 @@ export default function Page() {
                 </div>
                 <select className="h-10 rounded-xl border border-slate-200 bg-white px-3 text-sm" value={activityProvider} onChange={(e)=>setActivityProvider(e.target.value as ProviderKey)}>
                   <option value="mpesa">M-Pesa Lesotho</option>
-                  <option value="fnb">FNB Lesotho</option>
-                  <option value="ecocash">EcoCash Zimbabwe</option>
-                  <option value="paypal">PayPal</option>
                 </select>
               </div>
             </CardHeader>
