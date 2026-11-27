@@ -327,3 +327,25 @@ def test_live_outgoing_requires_actual_cost_before_any_posting():
         assert reconcile_authenticated_query(db, **pay, cost_observation=ProviderCostObservation(
             "mpesa", "live-p", "LSL", "CLIENT", "1000", "0", "1000")) == "succeeded"
         assert db.scalar(select(func.count(JournalEntry.id))) == 3
+
+
+def test_authenticated_reversal_quarantines_funding_without_rewriting_journals():
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "reversal-hold")
+        funding(db, ids)
+        args = dict(**ids, leg="funding")
+        with pytest.raises(TransactionError):
+            quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True, txid="other"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        hold = quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True))
+        assert hold["status"] == "investigation_required"
+        assert quarantine_authenticated_reversal(db, **args, observation=observation(reversed=True)) == hold
+        for leg in ("onward", "refund"):
+            with pytest.raises(TransactionError, match="reversal investigation"):
+                reserve_operation(db, **ids, leg=leg, reference="hold-" + leg)
+        with pytest.raises(TransactionError, match="reversal investigation"):
+            reconcile_authenticated_query(db, **args, source_shortcode="YYYY", destination="XXXX",
+                                          observation=observation())
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()

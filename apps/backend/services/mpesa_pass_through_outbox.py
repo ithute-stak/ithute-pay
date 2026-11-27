@@ -36,6 +36,9 @@ def reserve_operation(
     if row is None:
         raise TransactionError("Transaction not found in authorized scope")
 
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for provider reversal investigation")
+
     # Incoming funding may be net of a non-refundable provider charge.
     # Never reserve a gross refund until actual fee recovery and refund
     # responsibility have been independently established.

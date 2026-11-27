@@ -52,6 +52,8 @@ def reconcile_authenticated_query(
                      record_id=transaction_id, for_update=True)
     if row is None:
         raise TransactionError("Transaction outside authorized tenant scope")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for provider reversal investigation")
     app = db.get(Application, application_id)
     if app is None or app.merchant_id != merchant_id or app.environment not in {"test", "live"}:
         raise TransactionError("Invalid application environment or ownership")
@@ -187,3 +189,63 @@ def reconcile_authenticated_query(
                 actual_recipient_credit=Decimal(onward["net"]) if onward else None)
     db.flush()
     return attested.outcome
+
+
+def quarantine_authenticated_reversal(
+    db: Session, *, merchant_id: str, application_id: str,
+    transaction_id: str, leg: str, observation: ProviderQueryObservation,
+) -> dict:
+    """Persist a reversal hold without undoing journals or authorizing funds.
+
+    Trusted provider query caller only. The original successful movement must
+    match the immutable reservation and receipt. A reversal notice alone
+    does not prove the amount recovered or the party bearing the loss.
+    """
+    from dataclasses import replace
+    if leg not in {"funding", "onward", "refund"} or observation.reversed is not True:
+        raise TransactionError("Explicit provider reversal required")
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id, for_update=True)
+    if row is None or getattr(row, leg + "_status") != "succeeded":
+        raise TransactionError("Original confirmed movement required")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg,
+    ).with_for_update())
+    if intent is None:
+        raise TransactionError("Original reserved operation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+        MpesaPassThroughProviderReceipt.intent_id == intent.id))
+    if binding is None or receipt is None or receipt.provider != "mpesa":
+        raise TransactionError("Original provider receipt and party binding required")
+    expected = ExpectedMovement(intent.reference, intent.amount, intent.currency,
+                                binding.source_party, binding.destination_party)
+    # Validate the original movement identity, not the financial outcome of
+    # the reversal. No change to the original confirmed state is permitted.
+    original = validate_provider_query(expected, replace(observation, reversed=False,
+                                                          status="succeeded"))
+    digest = evidence_digest(original)
+    if (original.transaction_id != receipt.provider_transaction_id or
+            original.transaction_id != getattr(row, leg + "_provider_id") or
+            digest != receipt.canonical_evidence_hash or
+            digest != getattr(row, leg + "_evidence_hash")):
+        raise TransactionError("Reversal does not match original confirmed receipt")
+    snapshot = dict(row.quote_snapshot or {})
+    holds = dict(snapshot.get("reversal_holds") or {})
+    hold = {"leg": leg, "provider_id": original.transaction_id,
+            "original_evidence_digest": digest,
+            "reversal_evidence_digest": sha256(original.canonical_evidence + b":reversed").hexdigest(),
+            "status": "investigation_required"}
+    if leg in holds and holds[leg] != hold:
+        raise TransactionError("Conflicting reversal hold")
+    if leg not in holds:
+        holds[leg] = hold
+        snapshot["reversal_holds"] = holds
+        row.quote_snapshot = snapshot
+        row.version += 1
+        db.flush()
+    return hold
