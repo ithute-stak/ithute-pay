@@ -11,6 +11,9 @@ fail closed; no journal or fee may be recognized from an unverified response.
 """
 from __future__ import annotations
 
+from decimal import Decimal
+from hashlib import sha256
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -19,12 +22,13 @@ from database.models.mpesa_pass_through_identity import (
 )
 from services.mpesa_pass_through_evidence import evidence_digest
 from database.models.mpesa_pass_through_outbox import MpesaPassThroughOperationIntent
-from services.mpesa_pass_through_accounting import post_verified_outgoing
+from services.mpesa_pass_through_accounting import post_verified_outgoing, post_verified_incoming, preview_incoming_allocation
 from services.mpesa_pass_through_evidence import (
     ExpectedMovement, ProviderQueryObservation, validate_provider_query,
+    ProviderCostObservation, validate_provider_cost,
 )
 from services.mpesa_pass_through_lifecycle import TransactionError
-from services.mpesa_pass_through_store import find_owned, record_verified_evidence
+from services.mpesa_pass_through_store import find_owned, record_verified_evidence, load_lifecycle
 
 
 def reconcile_authenticated_query(
@@ -32,6 +36,7 @@ def reconcile_authenticated_query(
     transaction_id: str, leg: str,
     source_shortcode: str, destination: str,
     observation: ProviderQueryObservation,
+    cost_observation: ProviderCostObservation | None = None,
 ) -> str:
     """Trusted backend only; source and destination MUST be server-owned settings.
 
@@ -70,6 +75,30 @@ def reconcile_authenticated_query(
         source_shortcode=binding.source_party, destination=binding.destination_party,
     )
     attested = validate_provider_query(expected, observation)
+    incoming = row.direction == "incoming"
+    if incoming and leg == "refund":
+        raise TransactionError("Incoming refund reconciliation not yet certified")
+    snapshot = dict(row.quote_snapshot or {})
+    costs = dict(snapshot.get("verified_provider_costs") or {})
+    if incoming and attested.outcome == "succeeded":
+        if cost_observation is None:
+            raise TransactionError("Actual provider cost evidence required")
+        verified = validate_provider_cost(expected, attested, cost_observation)
+        if leg == "funding":
+            preview_incoming_allocation(load_lifecycle(row).quote,
+                actual_provider_cost=verified.deducted_fee, actual_master_credit=verified.net_credit)
+        elif verified.deducted_fee != 0 or verified.net_credit != row.onward_amount:
+            raise TransactionError("Unexpected onward provider deduction or recipient credit")
+        record = {"provider_id": attested.transaction_id,
+                  "movement_digest": evidence_digest(attested),
+                  "cost_digest": sha256(verified.canonical_evidence).hexdigest(),
+                  "fee": str(verified.deducted_fee), "net": str(verified.net_credit)}
+        if leg in costs and costs[leg] != record:
+            raise TransactionError("Conflicting provider cost evidence")
+        costs[leg] = record
+        snapshot["verified_provider_costs"] = costs
+    elif cost_observation is not None:
+        raise TransactionError("Unexpected cost evidence for movement")
     if attested.outcome == "succeeded":
         if not attested.transaction_id:
             raise TransactionError("Successful movement lacks provider ID")
@@ -108,8 +137,18 @@ def reconcile_authenticated_query(
             transaction_id=row.id,
         )
     else:
-        # Incoming pass-through accounting has not been certified; never
-        # accept an incoming movement as confirmed in this adapter.
-        raise TransactionError("Incoming pass-through reconciliation not yet certified")
+        row.quote_snapshot = snapshot
+        if row.funding_status == "succeeded":
+            funding = costs.get("funding")
+            if not funding or funding["provider_id"] != row.funding_provider_id or funding["movement_digest"] != row.funding_evidence_hash:
+                raise TransactionError("Missing matched funding cost evidence")
+            onward = costs.get("onward")
+            if row.onward_status == "succeeded" and (not onward or onward["provider_id"] != row.onward_provider_id
+                    or onward["movement_digest"] != row.onward_evidence_hash):
+                raise TransactionError("Missing matched onward cost evidence")
+            post_verified_incoming(db, merchant_id=merchant_id, application_id=application_id,
+                transaction_id=row.id, actual_provider_cost=Decimal(funding["fee"]),
+                actual_master_credit=Decimal(funding["net"]),
+                actual_recipient_credit=Decimal(onward["net"]) if onward else None)
     db.flush()
     return attested.outcome

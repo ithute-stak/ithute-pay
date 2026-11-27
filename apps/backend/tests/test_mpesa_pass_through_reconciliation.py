@@ -235,3 +235,39 @@ def test_provider_cost_contract_rejects_bad_evidence(change):
     actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1000", "10", "990")
     with pytest.raises(TransactionError):
         validate_provider_cost(expected, movement, replace(actual, **change))
+
+
+def test_incoming_reconciliation_requires_and_persists_actual_cost_evidence():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        merchant = Merchant(name="C2B evidence", slug="pt-c2b-cost-recon")
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="C2B", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming", principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="c2b-cost", request={"amount": "1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        reserve_operation(db, **ids, leg="funding", reference="c2b-fund")
+        bind_leg_identity(db, **ids, leg="funding", source_party="CLIENT", destination_party="XXXX")
+        fund = dict(**ids, leg="funding", source_shortcode="CLIENT", destination="XXXX",
+            observation=observation(ref="c2b-fund", amount="1000", source="CLIENT", txid="c2b-f"))
+        with pytest.raises(TransactionError, match="cost evidence"):
+            reconcile_authenticated_query(db, **fund)
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        assert reconcile_authenticated_query(db, **fund,
+            cost_observation=ProviderCostObservation("mpesa","c2b-f","LSL","XXXX","1000","10","990")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 2
+        assert row.quote_snapshot["verified_provider_costs"]["funding"]["net"] == "990"
+        reserve_operation(db, **ids, leg="onward", reference="c2b-pay")
+        bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="YYYY")
+        pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="YYYY",
+            observation=observation(ref="c2b-pay", amount="980", source="XXXX", destination="YYYY", txid="c2b-p"))
+        with pytest.raises(TransactionError, match="onward provider"):
+            reconcile_authenticated_query(db, **pay,
+                cost_observation=ProviderCostObservation("mpesa","c2b-p","LSL","YYYY","980","10","970"))
+        for _ in range(2):
+            assert reconcile_authenticated_query(db, **pay,
+                cost_observation=ProviderCostObservation("mpesa","c2b-p","LSL","YYYY","980","0","980")) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 4
+        db.commit()
