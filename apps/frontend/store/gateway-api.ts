@@ -203,11 +203,6 @@ export const gatewayApi = createApi({
       query: (body) => ({ url: "/admin/testing/mpesa-certification/run", method: "POST", body }),
       invalidatesTags: ["Sandbox", "Audit", "Transactions"],
     }),
-    ecocashSandboxCatalog: builder.query<any, void>({ query: () => "/admin/testing/ecocash/catalog", providesTags: ["Sandbox"] }),
-    runEcoCashSandboxTest: builder.mutation<any, Record<string, unknown>>({
-      query: (body) => ({ url: "/admin/testing/ecocash/run", method: "POST", body }),
-      invalidatesTags: ["Sandbox", "Payments", "Transactions", "Audit"],
-    }),
     runAllSandboxTests: builder.mutation<any, { amount: string; currency: string }>({
       query: (body) => ({ url: "/admin/testing/run-all", method: "POST", body }),
       invalidatesTags: ["Sandbox", "Dashboard", "Payments", "Payouts", "Transactions", "Transfers", "Authorizations", "Reversals", "Mandates", "Accounting", "Reconciliation", "Checkout", "Audit"],
@@ -238,5 +233,4 @@ export const {
   useSandboxCatalogQuery, useSandboxHistoryQuery, useTestLiveMpesaSandboxConnectionMutation,
   useRunSandboxTestMutation, useRunAllSandboxTestsMutation,
   useMpesaCertificationCatalogQuery, useRunMpesaCertificationTestMutation,
-  useEcocashSandboxCatalogQuery, useRunEcoCashSandboxTestMutation,
 } = gatewayApi;
