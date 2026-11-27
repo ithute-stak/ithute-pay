@@ -206,3 +206,22 @@ def test_simulation_claim_is_one_way_and_durable():
         db.flush()
         with pytest.raises(TransactionError, match="test application"):
             claim_sandbox_simulation(db, **args)
+
+
+def test_live_reservation_requires_verified_funding_receipt():
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "live-reservation-guard")
+        db.get(Application, app).environment = "live"
+        db.flush()
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx)
+        reserve_operation(db, **args, leg="funding", reference="live-fund")
+        bind_leg_identity(db, **args, leg="funding", source_party="YYYY", destination_party="XXXX")
+        record_verified_evidence(db, merchant_id=merchant, application_id=app,
+            record_id=tx, leg="funding", reference="live-fund", status="succeeded",
+            provider_transaction_id="gross-only", evidence=b"gross-only")
+        for leg in ("onward", "refund"):
+            with pytest.raises(TransactionError, match="Live accounting requires"):
+                reserve_operation(db, **args, leg=leg, reference="blocked-" + leg)
+        assert len(db.scalars(select(MpesaPassThroughOperationIntent).where(
+            MpesaPassThroughOperationIntent.transaction_id == tx)).all()) == 1

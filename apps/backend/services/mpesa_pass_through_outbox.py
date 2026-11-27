@@ -39,6 +39,16 @@ def reserve_operation(
     if (row.quote_snapshot or {}).get("reversal_holds"):
         raise TransactionError("Transaction held for provider reversal investigation")
 
+    from database.models import Application
+    app = db.get(Application, application_id)
+    if app is None or app.merchant_id != merchant_id or app.environment not in {"test", "live"}:
+        raise TransactionError("Invalid reservation application scope")
+    if app.environment == "live" and leg in {"onward", "refund"}:
+        # A successful status alone must not authorize a new live movement.
+        # Reuse the accounting receipt/amount validation, without posting.
+        from services.mpesa_pass_through_accounting import _require_confirmed_leg
+        _require_confirmed_leg(db, row, "funding")
+
     # Incoming funding may be net of a non-refundable provider charge.
     # Never reserve a gross refund until actual fee recovery and refund
     # responsibility have been independently established.
