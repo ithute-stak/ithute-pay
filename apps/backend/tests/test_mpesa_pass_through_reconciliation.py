@@ -273,3 +273,23 @@ def test_incoming_reconciliation_requires_and_persists_actual_cost_evidence():
                 cost_observation=ProviderCostObservation("mpesa","c2b-p","LSL","YYYY","980","0","980")) == "succeeded"
         assert db.scalar(select(func.count(JournalEntry.id))) == 4
         db.commit()
+
+
+def test_outgoing_cost_evidence_rejects_short_credit_before_journal():
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "out-cost")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        args = dict(**ids, leg="funding", source_shortcode="YYYY", destination="XXXX",
+                    observation=observation())
+        with pytest.raises(TransactionError, match="zero-cost"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "10", "1010"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        actual = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020")
+        assert reconcile_authenticated_query(db, **args, cost_observation=actual) == "succeeded"
+        with pytest.raises(TransactionError, match="required on replay"):
+            reconcile_authenticated_query(db, **args)
+        assert reconcile_authenticated_query(db, **args, cost_observation=actual) == "succeeded"
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1

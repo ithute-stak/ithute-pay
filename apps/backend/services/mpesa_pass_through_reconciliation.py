@@ -97,8 +97,24 @@ def reconcile_authenticated_query(
             raise TransactionError("Conflicting provider cost evidence")
         costs[leg] = record
         snapshot["verified_provider_costs"] = costs
+    elif not incoming and attested.outcome == "succeeded" and cost_observation is not None:
+        verified = validate_provider_cost(expected, attested, cost_observation)
+        if verified.deducted_fee != 0 or verified.net_credit != intent.amount:
+            raise TransactionError("Outgoing provider deduction or recipient credit differs from certified zero-cost policy")
+        record = {"provider_id": attested.transaction_id,
+                  "movement_digest": evidence_digest(attested),
+                  "cost_digest": sha256(verified.canonical_evidence).hexdigest(),
+                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f")}
+        if leg in costs and costs[leg] != record:
+            raise TransactionError("Conflicting provider cost evidence")
+        costs[leg] = record
+        snapshot["verified_provider_costs"] = costs
     elif cost_observation is not None:
         raise TransactionError("Unexpected cost evidence for movement")
+    # Existing offline fixtures without settlement observations remain supported.
+    # The future live dispatcher must require actual cost/credit for every leg.
+    if not incoming and leg in costs and cost_observation is None and attested.outcome == "succeeded":
+        raise TransactionError("Previously attested provider cost evidence required on replay")
     if attested.outcome == "succeeded":
         if not attested.transaction_id:
             raise TransactionError("Successful movement lacks provider ID")
@@ -132,6 +148,7 @@ def reconcile_authenticated_query(
     # For successfully completed outgoing movements, post exactly once using
     # the existing ledger. No fee is earned while beneficiary status is unknown.
     if row.direction == "outgoing":
+        row.quote_snapshot = snapshot
         post_verified_outgoing(
             db, merchant_id=merchant_id, application_id=application_id,
             transaction_id=row.id,
