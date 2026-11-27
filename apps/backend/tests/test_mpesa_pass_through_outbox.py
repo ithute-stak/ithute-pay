@@ -115,3 +115,24 @@ def test_no_automatic_dispatch_or_provider_operation():
         assert len(items) == 1
         assert items[0].provider_operation_id is None
         assert items[0].submitted_at is None
+
+
+def test_worker_plan_never_dispatches_or_retries_reserved_reference():
+    from services.mpesa_pass_through_outbox import plan_next_operation
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "worker-plan")
+        args = dict(merchant_id=merchant, application_id=app, transaction_id=tx)
+        assert plan_next_operation(db, **args)["action"] == "await_funding_authorization"
+        reserve_operation(db, **args, leg="funding", reference="worker-f")
+        assert plan_next_operation(db, **args)["action"] == "investigate_missing_binding"
+        bind_leg_identity(db, **args, leg="funding", source_party="YYYY", destination_party="XXXX")
+        plan = plan_next_operation(db, **args)
+        assert plan["action"] == "query_existing_reference"
+        assert plan["reference"] == "worker-f"
+        assert plan["dispatch_authorized"] is False
+        record_verified_evidence(db, merchant_id=merchant, application_id=app,
+            record_id=tx, leg="funding", reference="worker-f", status="succeeded",
+            provider_transaction_id="provider-f", evidence=b"gross only")
+        assert plan_next_operation(db, **args)["action"] == "await_verified_funding_cost"
+        assert len(db.scalars(select(MpesaPassThroughOperationIntent)).all()) == 1

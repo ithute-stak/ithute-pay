@@ -91,3 +91,59 @@ def list_reserved_for_reconciliation(db: Session, *, limit: int = 100):
                   MpesaPassThroughOperationIntent.id)
         .limit(limit)
     ).all()
+
+
+def plan_next_operation(db: Session, *, merchant_id: str, application_id: str,
+                        transaction_id: str) -> dict:
+    """Read-only worker planning. Never reserve, dispatch, post or retry money."""
+    from database.models import Application
+    from database.models.mpesa_pass_through_identity import MpesaPassThroughLegIdentity
+    from services.mpesa_pass_through_store import load_lifecycle
+    from services.mpesa_pass_through_lifecycle import LegStatus
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment not in {"test", "live"}:
+        raise TransactionError("Transaction not found in authorized environment")
+    def decision(action, leg=None, reference=None):
+        return {"action": action, "leg": leg, "reference": reference,
+                "environment": app.environment, "dispatch_authorized": False}
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        return decision("reversal_investigation")
+    tx = load_lifecycle(row)
+    for name in ("funding", "onward", "refund"):
+        movement = getattr(tx, name)
+        if movement.status in {LegStatus.PROCESSING, LegStatus.UNKNOWN}:
+            intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+                MpesaPassThroughOperationIntent.transaction_id == row.id,
+                MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+                MpesaPassThroughOperationIntent.application_id == application_id,
+                MpesaPassThroughOperationIntent.leg == name,
+                MpesaPassThroughOperationIntent.reference == movement.reference))
+            if intent is None:
+                return decision("investigate_missing_reservation", name)
+            binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+                MpesaPassThroughLegIdentity.intent_id == intent.id))
+            if binding is None:
+                return decision("investigate_missing_binding", name, intent.reference)
+            if intent.state == "closed":
+                return decision("investigate_conflicting_state", name, intent.reference)
+            return decision("query_existing_reference", name, intent.reference)
+    if tx.refund.status == LegStatus.SUCCEEDED:
+        return decision("refunded")
+    if tx.onward.status == LegStatus.SUCCEEDED:
+        return decision("completed" if tx.funding.status == LegStatus.SUCCEEDED else "investigate_conflicting_state")
+    if tx.refund.status == LegStatus.FAILED:
+        return decision("manual_refund_review")
+    if tx.funding.status == LegStatus.FAILED:
+        return decision("funding_failed")
+    if tx.funding.status == LegStatus.NOT_STARTED:
+        return decision("await_funding_authorization", "funding")
+    if tx.funding.status == LegStatus.SUCCEEDED:
+        saved = (row.quote_snapshot or {}).get("verified_provider_costs", {}).get("funding")
+        if not saved or saved.get("provider_id") != tx.funding.provider_transaction_id or saved.get("movement_digest") != tx.funding.evidence_hash or not saved.get("cost_digest"):
+            return decision("await_verified_funding_cost", "funding")
+        if tx.onward.status == LegStatus.FAILED:
+            return decision("manual_refund_review")
+        return decision("await_onward_authorization", "onward")
+    return decision("manual_review")
