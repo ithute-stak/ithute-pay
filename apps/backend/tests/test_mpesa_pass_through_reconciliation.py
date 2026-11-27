@@ -309,8 +309,15 @@ def test_live_outgoing_requires_actual_cost_before_any_posting():
         with pytest.raises(TransactionError, match="Live settlement requires"):
             reconcile_authenticated_query(db, **args)
         assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        with pytest.raises(TransactionError, match="source debit evidence"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020"))
+        with pytest.raises(TransactionError, match="sender-side"):
+            reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
+                "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020", "1030"))
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
         assert reconcile_authenticated_query(db, **args, cost_observation=ProviderCostObservation(
-            "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020")) == "succeeded"
+            "mpesa", "vodacom-f-1", "LSL", "XXXX", "1020", "0", "1020", "1020")) == "succeeded"
         reserve_operation(db, **ids, leg="onward", reference="live-pay")
         bind_leg_identity(db, **ids, leg="onward", source_party="XXXX", destination_party="CLIENT")
         pay = dict(**ids, leg="onward", source_shortcode="XXXX", destination="CLIENT",
@@ -325,7 +332,7 @@ def test_live_outgoing_requires_actual_cost_before_any_posting():
                 txid="live-p", reversed=True)})
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
         assert reconcile_authenticated_query(db, **pay, cost_observation=ProviderCostObservation(
-            "mpesa", "live-p", "LSL", "CLIENT", "1000", "0", "1000")) == "succeeded"
+            "mpesa", "live-p", "LSL", "CLIENT", "1000", "0", "1000", "1000")) == "succeeded"
         assert db.scalar(select(func.count(JournalEntry.id))) == 3
 
 

@@ -120,6 +120,7 @@ class ProviderCostObservation:
     gross_amount: str
     deducted_fee: str
     net_credit: str
+    source_debit: str | None = None
 
 
 @dataclass(frozen=True)
@@ -128,6 +129,7 @@ class ValidatedProviderCost:
     deducted_fee: Decimal
     net_credit: Decimal
     canonical_evidence: bytes
+    source_debit: Decimal | None = None
 
 
 def validate_provider_cost(expected: ExpectedMovement, movement: ValidatedMovement,
@@ -160,11 +162,22 @@ def validate_provider_cost(expected: ExpectedMovement, movement: ValidatedMoveme
         raise TransactionError("Invalid provider cost amounts")
     if gross <= 0 or gross != expected.amount or gross != fee + net:
         raise TransactionError("Provider gross, fee and net credit do not reconcile")
+    source_debit = None
+    if observation.source_debit is not None:
+        try:
+            source_debit = Decimal(observation.source_debit)
+        except (InvalidOperation, ValueError, TypeError) as exc:
+            raise TransactionError("Malformed source debit evidence") from exc
+        if not source_debit.is_finite() or source_debit.as_tuple().exponent < -2 or source_debit < gross:
+            raise TransactionError("Invalid source debit evidence")
+        if source_debit != gross:
+            raise TransactionError("Unexpected additional sender-side provider charge")
     canonical = json.dumps({
         "provider": "mpesa", "transaction_id": movement.transaction_id,
         "reference": expected.reference, "currency": "LSL", "destination": expected.destination,
         "movement_digest": evidence_digest(movement),
         "gross_amount": format(gross, ".2f"), "deducted_fee": format(fee, ".2f"),
         "net_credit": format(net, ".2f"),
+        **({"source_debit": format(source_debit, ".2f")} if source_debit is not None else {}),
     }, sort_keys=True, separators=(",", ":")).encode("utf-8")
-    return ValidatedProviderCost(gross, fee, net, canonical)
+    return ValidatedProviderCost(gross, fee, net, canonical, source_debit)

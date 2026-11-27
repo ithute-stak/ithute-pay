@@ -89,6 +89,8 @@ def reconcile_authenticated_query(
     costs = dict(snapshot.get("verified_provider_costs") or {})
     if live and attested.outcome == "succeeded" and cost_observation is None:
         raise TransactionError("Live settlement requires actual provider cost and credit evidence")
+    if live and attested.outcome == "succeeded" and cost_observation.source_debit is None:
+        raise TransactionError("Live settlement requires actual source debit evidence")
     # Check previous successful legs before any new mutation. A legacy gross-only
     # confirmation cannot authorize subsequent live settlement or revenue.
     if live:
@@ -98,7 +100,7 @@ def reconcile_authenticated_query(
             saved = costs.get(prior)
             if (not saved or saved.get("provider_id") != getattr(row, prior + "_provider_id")
                     or saved.get("movement_digest") != getattr(row, prior + "_evidence_hash")
-                    or not saved.get("cost_digest")):
+                    or not saved.get("cost_digest") or saved.get("source_debit") is None):
                 raise TransactionError("Prior live movement lacks matched settlement evidence")
     if incoming and attested.outcome == "succeeded":
         if cost_observation is None:
@@ -112,7 +114,8 @@ def reconcile_authenticated_query(
         record = {"provider_id": attested.transaction_id,
                   "movement_digest": evidence_digest(attested),
                   "cost_digest": sha256(verified.canonical_evidence).hexdigest(),
-                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f")}
+                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f"),
+                  **({"source_debit": format(verified.source_debit, ".2f")} if verified.source_debit is not None else {})}
         if leg in costs and costs[leg] != record:
             raise TransactionError("Conflicting provider cost evidence")
         costs[leg] = record
@@ -124,7 +127,8 @@ def reconcile_authenticated_query(
         record = {"provider_id": attested.transaction_id,
                   "movement_digest": evidence_digest(attested),
                   "cost_digest": sha256(verified.canonical_evidence).hexdigest(),
-                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f")}
+                  "fee": format(verified.deducted_fee, ".2f"), "net": format(verified.net_credit, ".2f"),
+                  **({"source_debit": format(verified.source_debit, ".2f")} if verified.source_debit is not None else {})}
         if leg in costs and costs[leg] != record:
             raise TransactionError("Conflicting provider cost evidence")
         costs[leg] = record
