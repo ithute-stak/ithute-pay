@@ -126,6 +126,8 @@ def test_merchant_user_is_denied_even_when_logged_in(client):
                                  "password":"Password123!"})
     assert response.status_code == 200, response.text
     token = response.json()["access_token"]
+    assert client.get(ROOT + "/revenue/summary", headers=auth(token),
+                      params={"merchant_id": "a"*36, "application_id": "b"*36}).status_code == 403
     assert client.get(ROOT + "/cases", headers=auth(token),
                       params={"merchant_id": "a"*36,
                               "application_id":"b"*36}).status_code == 403
@@ -134,6 +136,7 @@ def test_merchant_user_is_denied_even_when_logged_in(client):
 def test_revenue_summary_excludes_unfunded_quotes_and_requires_admin(client, admin_token):
     m, app, _ = seed_operation("revenue")
     params = {"merchant_id": m, "application_id": app}
+    client.cookies.clear()
     assert client.get(ROOT + "/revenue/summary", params=params).status_code in (401, 403)
     response = client.get(ROOT + "/revenue/summary", params=params, headers=auth(admin_token))
     assert response.status_code == 200, response.text
