@@ -160,3 +160,80 @@ def coordinate_sandbox_recovery(db: Session, *, merchant_id: str, application_id
             "limit_reached": len(items) == limit,
             "provider_called": False, "accounting_authorized": False,
             "dispatch_authorized": False, "retry_authorized": False}
+
+
+async def run_sandbox_recovery_cycle(*, merchant_id: str, application_id: str,
+                                     now: datetime | None = None,
+                                     age_seconds: int = 300, limit: int = 10) -> dict:
+    """Explicit bounded status-query cycle, never send payments or post journals.
+
+    Only the configured sandbox account may be used; no shortcode override,
+    production fallback, user-provided URL or credential. Not a scheduler.
+    """
+    from uuid import uuid4
+    from database.session import SessionLocal
+    from database.models import GatewayProviderConfiguration
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+    from services.mpesa_pass_through_outbox import run_sandbox_reconciliation_check
+    from providers.mpesa.factory import _gateway_client
+    if not 1 <= limit <= 20:
+        raise ValueError("Recovery query cycle limit must be between 1 and 20")
+    with SessionLocal() as db:
+        plan = coordinate_sandbox_recovery(db, merchant_id=merchant_id,
+            application_id=application_id, now=now, age_seconds=age_seconds, limit=limit)
+    results = []
+    for item in plan["items"]:
+        result = {"reference": item["reference"], "leg": item["leg"],
+                  "query_performed": False, "accounting_authorized": False}
+        if item["action"] != "query_original_reference":
+            results.append({**result, "status": "manual_review"})
+            continue
+        client = None
+        try:
+            with SessionLocal() as db:
+                readiness = assess_pass_through_sandbox_configuration(db)
+                if not readiness["configuration_complete"]:
+                    results.append({**result, "status": "sandbox_configuration_blocked"})
+                    continue
+                rows = db.scalars(select(GatewayProviderConfiguration).where(
+                    GatewayProviderConfiguration.provider == "mpesa",
+                    GatewayProviderConfiguration.environment == "sandbox")).all()
+                if len(rows) != 1:
+                    results.append({**result, "status": "sandbox_configuration_blocked"})
+                    continue
+                cfg = rows[0]
+                if (not cfg.enabled or cfg.mode != "live"
+                        or cfg.base_url not in {"https://openapi.m-pesa.com", "https://openapi.m-pesa.com/"}):
+                    results.append({**result, "status": "sandbox_configuration_blocked"})
+                    continue
+                client = _gateway_client(cfg)
+                if client.base != "https://openapi.m-pesa.com":
+                    raise TransactionError("Sandbox endpoint mismatch")
+                if client._redis is not None:
+                    await client._redis.aclose()
+                client._redis = None
+                # Recheck the planned identity immediately before querying.
+                fresh = coordinate_sandbox_recovery(db, merchant_id=merchant_id,
+                    application_id=application_id, now=now, age_seconds=age_seconds, limit=limit)
+                if not any(x["intent_id"] == item["intent_id"] and
+                           x["reference"] == item["reference"] and
+                           x["action"] == "query_original_reference" for x in fresh["items"]):
+                    results.append({**result, "status": "manual_review"})
+                    continue
+                observed = await run_sandbox_reconciliation_check(db,
+                    merchant_id=merchant_id, application_id=application_id,
+                    transaction_id=item["transaction_id"], client=client,
+                    conversation_reference="Q" + uuid4().hex)
+                results.append({**result, "query_performed": observed["query_performed"],
+                    "status": observed.get("observed_status", "manual_review"),
+                    "identity_evidence_sufficient": observed.get("identity_evidence_sufficient", False)})
+        except Exception:
+            # Never expose provider payloads, secrets or exception messages.
+            results.append({**result, "status": "query_unresolved"})
+        finally:
+            if client is not None:
+                client._session_memory = None
+    return {"environment": "test", "items": results,
+            "queries_completed": sum(x["query_performed"] for x in results),
+            "dispatch_authorized": False, "retry_authorized": False,
+            "accounting_authorized": False}

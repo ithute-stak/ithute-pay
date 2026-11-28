@@ -458,3 +458,34 @@ def test_recovery_coordinator_rechecks_stale_reservation_without_dispatch():
         db.flush()
         with pytest.raises(TransactionError, match="test application"):
             coordinate_sandbox_recovery(db, **kwargs)
+
+
+@pytest.mark.asyncio
+async def test_recovery_query_cycle_blocks_missing_config_and_live_application(monkeypatch):
+    from datetime import datetime, timedelta, timezone
+    from unittest.mock import Mock
+    from services.mpesa_pass_through_recovery_inbox import run_sandbox_recovery_cycle
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    factory = Mock()
+    monkeypatch.setattr("providers.mpesa.factory._gateway_client", factory)
+    monkeypatch.setattr("services.mpesa_certification_readiness.assess_pass_through_sandbox_configuration",
+                        lambda db: {"configuration_complete": False})
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "query-cycle-blocked")
+        scope = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **scope, reference="query-cycle")
+        bind_leg_identity(db, **scope, source_party="YYYY", destination_party="XXXX")
+        db.commit()
+    args = dict(merchant_id=merchant, application_id=app,
+                now=datetime.now(timezone.utc) + timedelta(hours=1))
+    result = await run_sandbox_recovery_cycle(**args)
+    assert result["queries_completed"] == 0
+    assert result["items"][0]["status"] == "sandbox_configuration_blocked"
+    assert not result["dispatch_authorized"]
+    factory.assert_not_called()
+    with SessionLocal() as db:
+        db.get(Application, app).environment = "live"
+        db.commit()
+    with pytest.raises(TransactionError, match="test application"):
+        await run_sandbox_recovery_cycle(**args)
+    factory.assert_not_called()
