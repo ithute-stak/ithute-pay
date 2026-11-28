@@ -380,3 +380,58 @@ def prepare_claimed_sandbox_simulation(*, merchant_id: str, application_id: str,
         except Exception:
             db.rollback()
             raise
+
+
+async def execute_claimed_offline_wire_simulation(plan: dict, *, account_shortcode: str,
+                                                 simulated_http_status: int = 200,
+                                                 simulated_response: dict | None = None) -> dict:
+    """Exercise real wire serialization using a sealed, network-free transport.
+
+    Synthetic responses are never settlement evidence. No injected client,
+    credentials, callback or network transport is accepted by this function.
+    """
+    from integrations.mpesa.client import MpesaClient
+    from integrations.base import ProviderResult
+    if (plan.get("claimed") is not True or plan.get("action") != "offline_simulation_only"
+            or plan.get("dispatch_authorized") is not False
+            or plan.get("provider_called") is not False):
+        raise TransactionError("Committed offline simulation plan required")
+    if not account_shortcode or account_shortcode != plan.get("required_shortcode"):
+        raise TransactionError("Simulation account identity mismatch")
+    method = plan.get("adapter_method")
+    if method not in {"collect", "transfer", "payout"}:
+        raise TransactionError("Unsupported simulation method")
+    args = plan["arguments"]
+    if (args.get("currency") != "LSL"
+            or args.get("transaction_reference") != plan.get("reference")
+            or args.get("third_party_conversation_id") != plan.get("reference")):
+        raise TransactionError("Simulation wire identity mismatch")
+
+    class OfflineTransport(MpesaClient):
+        def __init__(self):
+            self.shortcode = account_shortcode
+            self.country = "LES"
+            self.currency = "LSL"
+            self.environment = "sandbox"
+            self.calls = 0
+
+        async def _request(self, method, suffix, **kwargs):
+            self.calls += 1
+            if simulated_response is None:
+                raise TimeoutError("Synthetic transport timeout")
+            return simulated_http_status, dict(simulated_response)
+
+    client = OfflineTransport()
+    try:
+        result: ProviderResult = await getattr(client, method)(**args)
+        observed_status = result.status if result.status in {"succeeded", "failed", "processing", "unknown"} else "unknown"
+    except Exception:
+        observed_status = "unknown"
+    return {
+        "reference": plan["reference"], "simulation_only": True,
+        "synthetic_observed_status": observed_status,
+        "wire_attempted": client.calls == 1,
+        "action": "reconcile_existing_reference",
+        "provider_called": False, "dispatch_authorized": False,
+        "accounting_authorized": False, "retry_authorized": False,
+    }

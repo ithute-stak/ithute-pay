@@ -390,3 +390,38 @@ def test_worker_claim_commits_before_return_and_restart_cannot_reissue():
         db.commit()
     with pytest.raises(TransactionError, match="test application"):
         prepare_claimed_sandbox_simulation(**scope)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("response,expected", [
+    (None, "unknown"),
+    ({"output_ResponseCode": "INS-0", "output_TransactionID": "synthetic"}, "succeeded"),
+    ({"output_ResponseCode": "INS-9"}, "unknown"),
+])
+async def test_offline_worker_wire_outcomes_never_authorize_settlement(response, expected):
+    from services.mpesa_pass_through_outbox import (
+        prepare_claimed_sandbox_simulation, execute_claimed_offline_wire_simulation,
+    )
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from database.models import JournalEntry
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "offline-wire-worker")
+        scope = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **scope, reference="workerwire")
+        bind_leg_identity(db, **scope, source_party="YYYY", destination_party="XXXX")
+        db.commit()
+    plan = prepare_claimed_sandbox_simulation(**scope)
+    with pytest.raises(TransactionError, match="identity"):
+        await execute_claimed_offline_wire_simulation(plan, account_shortcode="ZZZZ")
+    result = await execute_claimed_offline_wire_simulation(
+        plan, account_shortcode="YYYY", simulated_response=response)
+    assert result["synthetic_observed_status"] == expected
+    assert result["wire_attempted"]
+    assert result["action"] == "reconcile_existing_reference"
+    for key in ("provider_called", "dispatch_authorized", "accounting_authorized", "retry_authorized"):
+        assert result[key] is False
+    with SessionLocal() as db:
+        assert not db.scalars(select(JournalEntry)).all()
+    replay = prepare_claimed_sandbox_simulation(**scope)
+    with pytest.raises(TransactionError, match="Committed offline"):
+        await execute_claimed_offline_wire_simulation(replay, account_shortcode="YYYY")
