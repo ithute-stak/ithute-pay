@@ -543,3 +543,29 @@ def test_full_funding_reversal_compensation_preview_is_balanced_and_nonposting()
             with pytest.raises(TransactionError, match="full zero-cost"):
                 preview_full_outgoing_funding_reversal(db, **{**args, **change})
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
+
+
+def test_full_onward_reversal_restores_liability_and_previews_fee_return():
+    from services.mpesa_pass_through_accounting import preview_full_outgoing_onward_reversal
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "onward-reversal-preview")
+        funding(db, ids)
+        payout(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="onward",
+            observation=observation(ref="payout-a", amount="1000", source="XXXX",
+                destination="26659000000", txid="vodacom-p-1", reversed=True))
+        args = dict(**ids, original_provider_id="vodacom-p-1",
+                    reversal_provider_id="reversal-onward", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1000"), actual_reversal_cost=Decimal("0"))
+        result = preview_full_outgoing_onward_reversal(db, **args)
+        assert result["restored_merchant_liability"] == "1020.00"
+        assert result["recognized_revenue_adjustment"] == "-20.00"
+        assert sum(Decimal(line["debit"]) for line in result["proposed_lines"]) == Decimal("1020")
+        assert sum(Decimal(line["credit"]) for line in result["proposed_lines"]) == Decimal("1020")
+        assert not result["fee_return_policy_approved"]
+        assert not result["journal_posted"]
+        assert not result["accounting_authorized"]
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
+        with pytest.raises(TransactionError, match="full zero-cost"):
+            preview_full_outgoing_onward_reversal(db, **{**args, "actual_recovered_amount": Decimal("999")})
