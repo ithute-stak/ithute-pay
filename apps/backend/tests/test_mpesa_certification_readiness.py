@@ -141,3 +141,25 @@ def test_sandbox_authentication_rejects_unapproved_endpoint(monkeypatch, url):
     assert result["authentication_blocker"] == "sandbox_endpoint_or_environment_mismatch"
     assert not result["authentication_attempted"]
     factory.assert_not_called()
+
+
+def test_pass_through_evidence_completeness_never_authorizes_dispatch():
+    from services.mpesa_certification_readiness import PASS_THROUGH_CASES, assess_pass_through_evidence
+    args = dict(case_references={case: "case-" + case for case in PASS_THROUGH_CASES},
+                provider_approval_reference="approval", tariff_reference="tariff",
+                statement_reference="statement", independent_review_reference="review")
+    result = assess_pass_through_evidence(**args)
+    assert result["documentation_complete"]
+    assert not result["provider_evidence_authenticated"]
+    assert not result["dispatch_authorized"]
+    assert not result["live_transfer_approved"]
+    args["case_references"] = dict.fromkeys(PASS_THROUGH_CASES, "same")
+    result = assess_pass_through_evidence(**args)
+    assert result["duplicate_case_references"]
+    assert not result["documentation_complete"]
+    args["case_references"] = {}
+    args["tariff_reference"] = None
+    result = assess_pass_through_evidence(**args)
+    assert result["missing_cases"] == list(PASS_THROUGH_CASES)
+    assert not result["document_references_present"]["tariff"]
+    assert not result["documentation_complete"]

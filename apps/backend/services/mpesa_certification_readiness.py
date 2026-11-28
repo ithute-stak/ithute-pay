@@ -188,3 +188,37 @@ async def authenticate_pass_through_sandbox(db) -> dict:
     except Exception:
         result["authentication_blocker"] = "sandbox_session_unavailable"
     return result
+
+
+def assess_pass_through_evidence(*, case_references: Mapping[str, str],
+                                 provider_approval_reference: str | None,
+                                 tariff_reference: str | None,
+                                 statement_reference: str | None,
+                                 independent_review_reference: str | None) -> dict:
+    """Assess reference completeness only; never treat references as proof."""
+    if not isinstance(case_references, Mapping):
+        raise ValueError("Case references must be a mapping")
+    if set(case_references) - set(PASS_THROUGH_CASES):
+        raise ValueError("Unknown pass-through certification case")
+    def valid(value):
+        return isinstance(value, str) and bool(value.strip()) and len(value) <= 200
+    missing = [case for case in PASS_THROUGH_CASES if not valid(case_references.get(case))]
+    supplied = [case_references[case].strip() for case in PASS_THROUGH_CASES if case not in missing]
+    duplicate = len(supplied) != len(set(supplied))
+    documents = {
+        "provider_approval": valid(provider_approval_reference),
+        "tariff": valid(tariff_reference),
+        "independent_statement": valid(statement_reference),
+        "independent_review": valid(independent_review_reference),
+    }
+    return {
+        "environment": "sandbox",
+        "missing_cases": missing,
+        "duplicate_case_references": duplicate,
+        "document_references_present": documents,
+        "documentation_complete": not missing and not duplicate and all(documents.values()),
+        "provider_evidence_authenticated": False,
+        "independent_settlement_verified": False,
+        "dispatch_authorized": False,
+        "live_transfer_approved": False,
+    }
