@@ -591,3 +591,86 @@ async def test_single_sandbox_sender_commits_once_before_mocked_submission(monke
     assert len(calls) == 1
     with SessionLocal() as db:
         assert not db.scalars(select(JournalEntry)).all()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("kind,leg,endpoint,amount", [
+    ("c2b", "funding", "c2bPayment/singleStage/", "1000.00"),
+    ("b2c", "onward", "b2cPayment/", "1000.00"),
+])
+async def test_single_sandbox_sender_customer_rails(monkeypatch, kind, leg, endpoint, amount):
+    import httpx
+    from database.models import GatewayProviderConfiguration, JournalEntry
+    from services.mpesa_pass_through_outbox import run_single_sandbox_submission
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from services.mpesa_pass_through_reconciliation import reconcile_authenticated_query
+    from services.mpesa_pass_through_evidence import ProviderQueryObservation, ProviderCostObservation
+    from integrations.mpesa.hardened import HardenedMpesaClient
+    calls = []
+    phone = "26659000000"  # synthetic test data, never transmitted
+    async def fake_request(self, method, url, **kwargs):
+        calls.append((method, url, kwargs["json"]))
+        return httpx.Response(200, json={"output_ResponseCode":"INS-0",
+                                       "output_TransactionID":"SYNTHETIC02"})
+    async def fake_session(self, *, force=False):
+        return "synthetic-session"
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(HardenedMpesaClient, "get_session_key", fake_session)
+    monkeypatch.setattr(HardenedMpesaClient, "_auth_header", lambda self, value: "Bearer synthetic")
+    monkeypatch.setattr("services.gateway_configuration.decrypted_api_key", lambda cfg: "synthetic-key")
+    with SessionLocal() as db:
+        merchant = Merchant(name="Sender " + kind, slug="sender-customer-" + kind)
+        db.add(merchant); db.flush()
+        app = Application(merchant_id=merchant.id, name="Test", environment="test")
+        db.add(app); db.flush()
+        q = quote(tenant_id=merchant.id, direction="incoming" if kind == "c2b" else "outgoing",
+                  transaction_type=kind, principal="1000", approved=True)
+        row = create_quote_record(db, merchant_id=merchant.id, application_id=app.id,
+            idempotency_key="customer-rail", request={"amount":"1000"}, quote=q)
+        ids = dict(merchant_id=merchant.id, application_id=app.id, transaction_id=row.id)
+        if leg == "onward":
+            reserve_operation(db, **ids, leg="funding", reference="PriorFunding01")
+            bind_leg_identity(db, **ids, leg="funding", source_party="222222", destination_party="111111")
+            reconcile_authenticated_query(db, **ids, leg="funding", source_shortcode="222222",
+                destination="111111", observation=ProviderQueryObservation(
+                    provider="mpesa", reference="PriorFunding01", amount="1020", currency="LSL",
+                    source_shortcode="222222", destination="111111", status="succeeded",
+                    transaction_id="SyntheticFunding01"),
+                cost_observation=ProviderCostObservation("mpesa", "SyntheticFunding01", "LSL",
+                    "111111", "1020", "0", "1020", "1020"))
+        scope = dict(**ids, leg=leg)
+        reserve_operation(db, **scope, reference="CustomerRail01")
+        source, destination = (phone, "111111") if kind == "c2b" else ("111111", phone)
+        bind_leg_identity(db, **scope, source_party=source, destination_party=destination)
+        cfg = db.scalar(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa",
+            GatewayProviderConfiguration.environment == "sandbox"))
+        if cfg is None:
+            cfg = GatewayProviderConfiguration(provider="mpesa", environment="sandbox")
+            db.add(cfg)
+        cfg.enabled, cfg.mode, cfg.active = True, "live", False
+        cfg.base_url = "https://openapi.m-pesa.com"
+        cfg.country, cfg.currency, cfg.market = "LES", "LSL", "vodacomLES"
+        cfg.service_provider_code, cfg.origin = "111111", "*"
+        cfg.api_key_ciphertext, cfg.public_key = "synthetic", "synthetic"
+        cfg.metadata_json = {"capabilities":{"collection":True,"payout":True,"query":True},
+            "pass_through_sandbox_fixtures":{"enabled":True,"approval_reference":"synthetic",
+            "application_id":app.id,"test_msisdns":[phone],"max_amount_lsl":"1000.00"}}
+        baseline = len(db.scalars(select(JournalEntry)).all())
+        db.commit()
+    result = await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    assert result["observed_status"] == "accepted_unverified"
+    assert len(calls) == 1
+    method, url, body = calls[0]
+    assert method == "POST"
+    assert url == "https://openapi.m-pesa.com/sandbox/ipg/v2/vodacomLES/" + endpoint
+    assert body["input_Amount"] == amount
+    assert body["input_CustomerMSISDN"] == phone
+    assert body["input_ServiceProviderCode"] == "111111"
+    assert body["input_TransactionReference"] == "CustomerRail01"
+    assert not result["accounting_authorized"]
+    with SessionLocal() as db:
+        assert len(db.scalars(select(JournalEntry)).all()) == baseline
+    with pytest.raises(TransactionError):
+        await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    assert len(calls) == 1
