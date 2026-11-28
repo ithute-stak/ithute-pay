@@ -435,3 +435,73 @@ async def execute_claimed_offline_wire_simulation(plan: dict, *, account_shortco
         "provider_called": False, "dispatch_authorized": False,
         "accounting_authorized": False, "retry_authorized": False,
     }
+
+
+def assess_sandbox_refund_eligibility(db: Session, *, merchant_id: str,
+                                      application_id: str, transaction_id: str) -> dict:
+    """Read-only full outgoing refund eligibility; never reserve or send.
+
+    Require matched funding cost and original receipt, and do not treat
+    ambiguous onward status as failure. Actual refund fee/permission evidence
+    must be independently certified before an execution path is added.
+    """
+    from database.models import Application
+    from database.models.mpesa_pass_through_identity import (
+        MpesaPassThroughLegIdentity, MpesaPassThroughProviderReceipt,
+    )
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Refund assessment requires authorized test application")
+    snapshot = row.quote_snapshot or {}
+    blockers = []
+    if snapshot.get("reversal_holds"):
+        blockers.append("reversal_investigation")
+    if row.direction != "outgoing" or row.currency != "LSL" or row.provider_cost != 0 or snapshot.get("fee_payer") != "tenant":
+        blockers.append("unsupported_refund_cost_policy")
+    if row.funding_status != "succeeded":
+        blockers.append("funding_not_confirmed")
+    if row.onward_status not in {"not_started", "failed"}:
+        blockers.append("onward_not_safely_excluded")
+    if row.refund_status != "not_started":
+        blockers.append("existing_refund_must_be_reconciled")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == "funding"))
+    binding = receipt = None
+    if intent is not None:
+        binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+            MpesaPassThroughLegIdentity.intent_id == intent.id))
+        receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+            MpesaPassThroughProviderReceipt.intent_id == intent.id))
+    saved = snapshot.get("verified_provider_costs", {}).get("funding") or {}
+    gross = format(row.funding_amount, ".2f")
+    if (intent is None or intent.provider != "mpesa" or intent.state != "closed"
+            or intent.reference != row.funding_reference or intent.amount != row.funding_amount
+            or intent.currency != "LSL" or binding is None or receipt is None
+            or receipt.provider != "mpesa" or receipt.provider_transaction_id != row.funding_provider_id
+            or receipt.canonical_evidence_hash != row.funding_evidence_hash
+            or saved.get("provider_id") != row.funding_provider_id
+            or saved.get("movement_digest") != row.funding_evidence_hash
+            or not saved.get("cost_digest") or saved.get("source_debit") != gross
+            or saved.get("net") != gross or saved.get("fee") != "0.00"):
+        blockers.append("matched_funding_settlement_required")
+    if row.onward_status == "failed":
+        # Failure must be reconciled, not inferred from an HTTP error or timeout.
+        onward = db.scalar(select(MpesaPassThroughOperationIntent).where(
+            MpesaPassThroughOperationIntent.transaction_id == row.id,
+            MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+            MpesaPassThroughOperationIntent.application_id == application_id,
+            MpesaPassThroughOperationIntent.leg == "onward"))
+        if (onward is None or onward.state != "closed" or onward.provider != "mpesa"
+                or onward.reference != row.onward_reference or not row.onward_evidence_hash):
+            blockers.append("matched_onward_failure_required")
+    return {"environment": "test", "eligibility_blockers": blockers,
+            "structurally_eligible": not blockers,
+            "proposed_refund_amount": gross if not blockers else None,
+            "recognized_revenue": "0.00" if not blockers else None,
+            "provider_refund_policy_verified": False, "refund_execution_authorized": False,
+            "reservation_authorized": False, "accounting_authorized": False}

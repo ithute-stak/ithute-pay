@@ -569,3 +569,32 @@ def test_full_onward_reversal_restores_liability_and_previews_fee_return():
         assert db.scalar(select(func.count(JournalEntry.id))) == 3
         with pytest.raises(TransactionError, match="full zero-cost"):
             preview_full_outgoing_onward_reversal(db, **{**args, "actual_recovered_amount": Decimal("999")})
+
+
+def test_refund_eligibility_requires_matched_cost_and_excludes_uncertain_onward():
+    from services.mpesa_pass_through_outbox import assess_sandbox_refund_eligibility
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "refund-eligibility")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert not result["structurally_eligible"]
+        reconcile_authenticated_query(db, **ids, leg="funding", source_shortcode="YYYY",
+            destination="XXXX", observation=observation(),
+            cost_observation=ProviderCostObservation("mpesa", "vodacom-f-1", "LSL",
+                "XXXX", "1020", "0", "1020", "1020"))
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert result["structurally_eligible"]
+        assert result["proposed_refund_amount"] == "1020.00"
+        assert not result["refund_execution_authorized"]
+        assert not result["reservation_authorized"]
+        reserve_operation(db, **ids, leg="onward", reference="payout-a")
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert "onward_not_safely_excluded" in result["eligibility_blockers"]
+        assert result["proposed_refund_amount"] is None
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            assess_sandbox_refund_eligibility(db, **ids)
