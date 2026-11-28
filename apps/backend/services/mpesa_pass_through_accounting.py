@@ -293,3 +293,112 @@ def preview_incoming_refund_capacity(quote, *, actual_provider_cost: Decimal,
     return {"available_funds": available, "required_funds": required,
             "shortfall": max(ZERO, required - available),
             "recognized_revenue": ZERO, "refund_execution_authorized": False}
+
+
+def preview_full_outgoing_funding_reversal(
+    db: Session, *, merchant_id: str, application_id: str, transaction_id: str,
+    original_provider_id: str, reversal_provider_id: str,
+    actual_recovered_amount: Decimal, actual_reversal_cost: Decimal,
+    statement_reference: str,
+) -> dict:
+    """Preview compensation ONLY for full zero-cost funding reversal before payout.
+
+    Recovery amount means funds restored to the original sender, not funds
+    received by IthutePay. Do not generalize to partial recovery, completed
+    onward settlement, incoming funding or reversal of an onward payment.
+    """
+    from services.mpesa_pass_through_reconciliation import preview_reversal_recovery
+    recovery = preview_reversal_recovery(db, merchant_id=merchant_id,
+        application_id=application_id, transaction_id=transaction_id, leg="funding",
+        original_provider_id=original_provider_id, reversal_provider_id=reversal_provider_id,
+        actual_recovered_amount=actual_recovered_amount,
+        actual_reversal_cost=actual_reversal_cost, statement_reference=statement_reference)
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    _require_outgoing(row)
+    tx = load_lifecycle(row)
+    if (tx.funding.status != LegStatus.SUCCEEDED
+            or tx.onward.status != LegStatus.NOT_STARTED
+            or tx.refund.status != LegStatus.NOT_STARTED
+            or actual_recovered_amount != row.funding_amount or actual_reversal_cost != ZERO):
+        raise TransactionError("Only full zero-cost funding reversal before onward or refund is supported")
+    entries = db.scalars(select(JournalEntry).where(
+        JournalEntry.source_type == SOURCE, JournalEntry.source_id == row.id)).all()
+    if len(entries) != 1:
+        raise TransactionError("Exactly one original funding journal required")
+    entry = entries[0]
+    if (entry.merchant_id != merchant_id or entry.application_id != application_id
+            or entry.reference != "funding:" + row.id or entry.status != "posted"):
+        raise TransactionError("Original funding journal mismatch")
+    gross = money(row.funding_amount)
+    _validate_reversal_original_lines(db, entry, merchant_id,
+                                      [("1000", gross, ZERO), ("2000", ZERO, gross)])
+    return {**recovery, "original_journal_id": entry.id,
+            "proposed_lines": [
+                {"account_code": "2000", "debit": format(gross, ".2f"), "credit": "0.00"},
+                {"account_code": "1000", "debit": "0.00", "credit": format(gross, ".2f")},
+            ],
+            "recognized_revenue_adjustment": "0.00", "journal_posted": False,
+            "accounting_authorized": False, "hold_release_authorized": False}
+
+
+def _validate_reversal_original_lines(db, entry, merchant_id, expected):
+    rows = db.execute(select(LedgerAccount.code, JournalLine.debit, JournalLine.credit,
+        JournalLine.currency, LedgerAccount.currency, JournalLine.merchant_id, LedgerAccount.merchant_id)
+        .join(JournalLine, JournalLine.account_id == LedgerAccount.id)
+        .where(JournalLine.journal_entry_id == entry.id)).all()
+    if any(line_currency != "LSL" or account_currency != "LSL"
+           or line_merchant != merchant_id or account_merchant != merchant_id
+           for _, _, _, line_currency, account_currency, line_merchant, account_merchant in rows):
+        raise TransactionError("Original journal currency or owner mismatch")
+    if sorted((code, money(debit), money(credit)) for code, debit, credit, *_ in rows) != sorted(expected):
+        raise TransactionError("Original journal lines mismatch")
+
+
+def preview_full_outgoing_onward_reversal(
+    db: Session, *, merchant_id: str, application_id: str, transaction_id: str,
+    original_provider_id: str, reversal_provider_id: str,
+    actual_recovered_amount: Decimal, actual_reversal_cost: Decimal,
+    statement_reference: str,
+) -> dict:
+    """Preview full payout returned to gateway; assume fee also returned to liability.
+
+    This is a proposed accounting policy only. No posting, hold release,
+    recipient retry or refund is authorized by this preview.
+    """
+    from services.mpesa_pass_through_reconciliation import preview_reversal_recovery
+    recovery = preview_reversal_recovery(db, merchant_id=merchant_id,
+        application_id=application_id, transaction_id=transaction_id, leg="onward",
+        original_provider_id=original_provider_id, reversal_provider_id=reversal_provider_id,
+        actual_recovered_amount=actual_recovered_amount,
+        actual_reversal_cost=actual_reversal_cost, statement_reference=statement_reference)
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    _require_outgoing(row)
+    tx = load_lifecycle(row)
+    if (tx.funding.status != LegStatus.SUCCEEDED or tx.onward.status != LegStatus.SUCCEEDED
+            or tx.refund.status != LegStatus.NOT_STARTED
+            or set((row.quote_snapshot or {}).get("reversal_holds", {})) != {"onward"}
+            or actual_recovered_amount != row.onward_amount or actual_reversal_cost != ZERO):
+        raise TransactionError("Only full zero-cost isolated onward reversal is supported")
+    gross, amount, fee = map(money, (row.funding_amount, row.onward_amount, row.platform_fee))
+    expected = {"funding": [("1000", gross, ZERO), ("2000", ZERO, gross)],
+                "onward": [("2000", amount, ZERO), ("1000", ZERO, amount)]}
+    if fee > ZERO:
+        expected["fee"] = [("2000", fee, ZERO), ("4000", ZERO, fee)]
+    entries = db.scalars(select(JournalEntry).where(
+        JournalEntry.source_type == SOURCE, JournalEntry.source_id == row.id)).all()
+    if len(entries) != len(expected) or {e.reference for e in entries} != {k + ":" + row.id for k in expected}:
+        raise TransactionError("Original settlement journal inventory mismatch")
+    for entry in entries:
+        if entry.merchant_id != merchant_id or entry.application_id != application_id or entry.status != "posted":
+            raise TransactionError("Original settlement journal scope mismatch")
+        _validate_reversal_original_lines(db, entry, merchant_id, expected[entry.reference.split(":")[0]])
+    lines = [{"account_code":"1000", "debit":format(amount, ".2f"), "credit":"0.00"},
+             {"account_code":"2000", "debit":"0.00", "credit":format(amount, ".2f")}]
+    if fee > ZERO:
+        lines.extend([{"account_code":"4000", "debit":format(fee, ".2f"), "credit":"0.00"},
+                      {"account_code":"2000", "debit":"0.00", "credit":format(fee, ".2f")}])
+    return {**recovery, "proposed_lines": lines, "restored_merchant_liability": format(gross, ".2f"),
+            "recognized_revenue_adjustment": format(-fee if fee else ZERO, ".2f"),
+            "fee_return_policy_approved": False, "journal_posted": False}

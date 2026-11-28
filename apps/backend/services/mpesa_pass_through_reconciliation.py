@@ -253,3 +253,113 @@ def quarantine_authenticated_reversal(
         row.version += 1
         db.flush()
     return hold
+
+
+def preview_claimed_sandbox_settlement(
+    db: Session, *, merchant_id: str, application_id: str,
+    transaction_id: str, leg: str, observation: ProviderQueryObservation,
+    cost_observation: ProviderCostObservation,
+) -> dict:
+    """Non-posting validation of a claimed test movement and settlement fields.
+
+    Structural consistency is not authentication. Never call the posting
+    reconciler here, and never accept a synthetic execution result as evidence.
+    """
+    if leg not in {"funding", "onward"}:
+        raise TransactionError("Unsupported sandbox settlement movement")
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Settlement preview requires authorized test application")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for reversal investigation")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg))
+    if (intent is None or intent.provider != "mpesa" or intent.state != "needs_reconciliation"
+            or getattr(row, leg + "_status") not in {"processing", "unknown"}
+            or getattr(row, leg + "_reference") != intent.reference
+            or intent.currency != row.currency
+            or intent.amount != (row.funding_amount if leg == "funding" else row.onward_amount)):
+        raise TransactionError("Matching unresolved claimed operation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    if binding is None:
+        raise TransactionError("Immutable party binding required")
+    if not isinstance(observation, ProviderQueryObservation) or not isinstance(cost_observation, ProviderCostObservation):
+        raise TransactionError("Separate query and settlement observations required")
+    expected = ExpectedMovement(intent.reference, intent.amount, intent.currency,
+                                binding.source_party, binding.destination_party)
+    movement = validate_provider_query(expected, observation)
+    if cost_observation.source_debit is None:
+        raise TransactionError("Actual source debit evidence required")
+    cost = validate_provider_cost(expected, movement, cost_observation)
+    if row.direction == "incoming" and leg == "funding":
+        preview_incoming_allocation(load_lifecycle(row).quote,
+            actual_provider_cost=cost.deducted_fee, actual_master_credit=cost.net_credit)
+    elif cost.deducted_fee != 0 or cost.net_credit != intent.amount:
+        raise TransactionError("Unexpected provider deduction or beneficiary credit")
+    return {
+        "reference": intent.reference, "environment": "test",
+        "structurally_consistent": True,
+        "gross_amount": format(cost.gross_amount, ".2f"),
+        "deducted_fee": format(cost.deducted_fee, ".2f"),
+        "net_credit": format(cost.net_credit, ".2f"),
+        "source_debit": format(cost.source_debit, ".2f"),
+        "provider_evidence_authenticated": False,
+        "settlement_verified": False, "accounting_authorized": False,
+        "dispatch_authorized": False, "retry_authorized": False,
+    }
+
+
+def preview_reversal_recovery(
+    db: Session, *, merchant_id: str, application_id: str, transaction_id: str,
+    leg: str, original_provider_id: str, reversal_provider_id: str,
+    actual_recovered_amount: Decimal, actual_reversal_cost: Decimal,
+    statement_reference: str,
+) -> dict:
+    """Assess recovery against a held original movement, never release or post.
+
+    An independently authenticated statement and approved loss allocation are
+    required before a compensating journal can be designed. A reversal of a
+    funding leg after onward settlement can create a different liability from
+    a reversal of an onward leg; do not infer that both cancel the transaction.
+    """
+    if leg not in {"funding", "onward", "refund"}:
+        raise TransactionError("Unknown reversal movement")
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Reversal preview requires authorized test application")
+    hold = (row.quote_snapshot or {}).get("reversal_holds", {}).get(leg)
+    if (not hold or hold.get("status") != "investigation_required"
+            or hold.get("provider_id") != original_provider_id
+            or original_provider_id != getattr(row, leg + "_provider_id")
+            or hold.get("original_evidence_digest") != getattr(row, leg + "_evidence_hash")):
+        raise TransactionError("Matching original reversal hold required")
+    if (not isinstance(reversal_provider_id, str) or not reversal_provider_id.strip()
+            or len(reversal_provider_id) > 100 or reversal_provider_id == original_provider_id
+            or not isinstance(statement_reference, str) or not statement_reference.strip()
+            or len(statement_reference) > 200):
+        raise TransactionError("Separate reversal and statement identifiers required")
+    for value in (actual_recovered_amount, actual_reversal_cost):
+        if (not isinstance(value, Decimal) or not value.is_finite() or value < 0
+                or value.as_tuple().exponent < -2):
+            raise TransactionError("Invalid reversal recovery amount")
+    original = row.onward_amount if leg == "onward" else row.funding_amount
+    if actual_recovered_amount > original:
+        raise TransactionError("Recovery exceeds original movement")
+    return {
+        "leg": leg, "original_amount": format(original, ".2f"),
+        "reported_recovery": format(actual_recovered_amount, ".2f"),
+        "reported_reversal_cost": format(actual_reversal_cost, ".2f"),
+        "gross_recovery_gap": format(original - actual_recovered_amount + actual_reversal_cost, ".2f"),
+        "onward_previously_confirmed": row.onward_status == "succeeded",
+        "hold_release_authorized": False, "accounting_authorized": False,
+        "refund_execution_authorized": False, "provider_evidence_authenticated": False,
+        "loss_allocation_required": True,
+    }

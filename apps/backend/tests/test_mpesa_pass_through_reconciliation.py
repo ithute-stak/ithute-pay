@@ -453,3 +453,148 @@ def test_direct_live_accounting_cannot_bypass_settlement_receipts():
         with pytest.raises(TransactionError, match="Live accounting requires"):
             post_verified_outgoing(db, **ids)
         assert db.scalar(select(func.count(JournalEntry.id))) == 0
+
+
+def test_claimed_sandbox_settlement_preview_never_posts_or_authenticates():
+    from dataclasses import replace
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation
+    from services.mpesa_pass_through_reconciliation import preview_claimed_sandbox_settlement
+    with SessionLocal() as db:
+        ids = new(db, "settlement-preview")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        cost = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX",
+                                      "1020", "0", "1020", "1020")
+        args = dict(**ids, leg="funding", observation=observation(), cost_observation=cost)
+        with pytest.raises(TransactionError, match="claimed"):
+            preview_claimed_sandbox_settlement(db, **args)
+        assert claim_sandbox_simulation(db, **ids, leg="funding", reference="fund-a")
+        result = preview_claimed_sandbox_settlement(db, **args)
+        assert result["structurally_consistent"]
+        assert result["net_credit"] == "1020.00"
+        for key in ("provider_evidence_authenticated", "settlement_verified", "accounting_authorized",
+                    "dispatch_authorized", "retry_authorized"):
+            assert result[key] is False
+        for bad in (replace(cost, source_debit=None), replace(cost, source_debit="1030"),
+                    replace(cost, deducted_fee="10", net_credit="1010"),
+                    replace(cost, destination="OTHER")):
+            with pytest.raises(TransactionError):
+                preview_claimed_sandbox_settlement(db, **{**args, "cost_observation": bad})
+        with pytest.raises(TransactionError, match="Separate"):
+            preview_claimed_sandbox_settlement(db, **{**args, "observation": {"synthetic_observed_status":"succeeded"}})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            preview_claimed_sandbox_settlement(db, **args)
+
+
+def test_reversal_recovery_preview_preserves_hold_and_original_journals():
+    from services.mpesa_pass_through_reconciliation import (
+        quarantine_authenticated_reversal, preview_reversal_recovery,
+    )
+    with SessionLocal() as db:
+        ids = new(db, "reversal-recovery-preview")
+        funding(db, ids)
+        args = dict(**ids, leg="funding", original_provider_id="vodacom-f-1",
+                    reversal_provider_id="separate-reversal", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1000"), actual_reversal_cost=Decimal("5"))
+        with pytest.raises(TransactionError, match="hold"):
+            preview_reversal_recovery(db, **args)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        result = preview_reversal_recovery(db, **args)
+        assert result["gross_recovery_gap"] == "25.00"
+        assert result["loss_allocation_required"]
+        for key in ("hold_release_authorized", "accounting_authorized",
+                    "refund_execution_authorized", "provider_evidence_authenticated"):
+            assert result[key] is False
+        for change in ({"actual_recovered_amount": Decimal("1021")},
+                       {"actual_reversal_cost": Decimal("-1")},
+                       {"reversal_provider_id": "vodacom-f-1"},
+                       {"original_provider_id": "other"}):
+            with pytest.raises(TransactionError):
+                preview_reversal_recovery(db, **{**args, **change})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()
+
+
+def test_full_funding_reversal_compensation_preview_is_balanced_and_nonposting():
+    from services.mpesa_pass_through_accounting import preview_full_outgoing_funding_reversal
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "full-funding-reversal-preview")
+        funding(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        args = dict(**ids, original_provider_id="vodacom-f-1",
+                    reversal_provider_id="reversal-1", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1020"), actual_reversal_cost=Decimal("0"))
+        result = preview_full_outgoing_funding_reversal(db, **args)
+        assert result["proposed_lines"] == [
+            {"account_code":"2000", "debit":"1020.00", "credit":"0.00"},
+            {"account_code":"1000", "debit":"0.00", "credit":"1020.00"}]
+        assert result["journal_posted"] is False
+        assert result["accounting_authorized"] is False
+        assert result["hold_release_authorized"] is False
+        for change in ({"actual_recovered_amount": Decimal("1000")},
+                       {"actual_reversal_cost": Decimal("1")}):
+            with pytest.raises(TransactionError, match="full zero-cost"):
+                preview_full_outgoing_funding_reversal(db, **{**args, **change})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+
+
+def test_full_onward_reversal_restores_liability_and_previews_fee_return():
+    from services.mpesa_pass_through_accounting import preview_full_outgoing_onward_reversal
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "onward-reversal-preview")
+        funding(db, ids)
+        payout(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="onward",
+            observation=observation(ref="payout-a", amount="1000", source="XXXX",
+                destination="26659000000", txid="vodacom-p-1", reversed=True))
+        args = dict(**ids, original_provider_id="vodacom-p-1",
+                    reversal_provider_id="reversal-onward", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1000"), actual_reversal_cost=Decimal("0"))
+        result = preview_full_outgoing_onward_reversal(db, **args)
+        assert result["restored_merchant_liability"] == "1020.00"
+        assert result["recognized_revenue_adjustment"] == "-20.00"
+        assert sum(Decimal(line["debit"]) for line in result["proposed_lines"]) == Decimal("1020")
+        assert sum(Decimal(line["credit"]) for line in result["proposed_lines"]) == Decimal("1020")
+        assert not result["fee_return_policy_approved"]
+        assert not result["journal_posted"]
+        assert not result["accounting_authorized"]
+        assert db.scalar(select(func.count(JournalEntry.id))) == 3
+        with pytest.raises(TransactionError, match="full zero-cost"):
+            preview_full_outgoing_onward_reversal(db, **{**args, "actual_recovered_amount": Decimal("999")})
+
+
+def test_refund_eligibility_requires_matched_cost_and_excludes_uncertain_onward():
+    from services.mpesa_pass_through_outbox import assess_sandbox_refund_eligibility
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    with SessionLocal() as db:
+        ids = new(db, "refund-eligibility")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert not result["structurally_eligible"]
+        reconcile_authenticated_query(db, **ids, leg="funding", source_shortcode="YYYY",
+            destination="XXXX", observation=observation(),
+            cost_observation=ProviderCostObservation("mpesa", "vodacom-f-1", "LSL",
+                "XXXX", "1020", "0", "1020", "1020"))
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert result["structurally_eligible"]
+        assert result["proposed_refund_amount"] == "1020.00"
+        assert not result["refund_execution_authorized"]
+        assert not result["reservation_authorized"]
+        reserve_operation(db, **ids, leg="onward", reference="payout-a")
+        result = assess_sandbox_refund_eligibility(db, **ids)
+        assert "onward_not_safely_excluded" in result["eligibility_blockers"]
+        assert result["proposed_refund_amount"] is None
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            assess_sandbox_refund_eligibility(db, **ids)

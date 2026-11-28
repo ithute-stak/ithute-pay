@@ -204,3 +204,63 @@ def test_consolidated_revenue_separates_environment_and_period_from_closing_bala
         assert len(data["merchants"]) == 1
         assert tuple(data["totals"][k] for k in ("period_service_revenue",
             "closing_merchant_liability", "closing_provider_clearing")) == expected
+
+
+def test_certification_readiness_and_preview_require_platform_admin(client, admin_token):
+    client.cookies.clear()
+    path = ROOT + "/certification"
+    assert client.get(path + "/readiness").status_code in (401, 403)
+    assert client.post(path + "/evidence/preview", json={}).status_code in (401, 403)
+    headers = auth(admin_token)
+    result = client.get(path + "/readiness", headers=headers)
+    assert result.status_code == 200, result.text
+    assert result.json()["environment"] == "sandbox"
+    assert result.json()["dispatch_authorized"] is False
+    assert result.json()["production_configuration_changed"] is False
+    preview = client.post(path + "/evidence/preview", headers=headers, json={})
+    assert preview.status_code == 200, preview.text
+    assert len(preview.json()["missing_cases"]) == 10
+    assert preview.json()["dispatch_authorized"] is False
+    assert client.post(path + "/evidence/preview", headers=headers,
+                       json={"case_references":{"unexpected":"ref"}}).status_code == 422
+    with SessionLocal() as db:
+        db.add(User(email="certification-limited@example.com", full_name="Limited",
+                    password_hash=hash_password("Password123!"), role="merchant_admin"))
+        db.commit()
+    client.cookies.clear()
+    login = client.post("/api/v1/auth/login", json={"email":"certification-limited@example.com",
+                                                    "password":"Password123!"})
+    assert login.status_code == 200
+    limited = auth(login.json()["access_token"])
+    assert client.get(path + "/readiness", headers=limited).status_code == 403
+    assert client.post(path + "/evidence/preview", headers=limited, json={}).status_code == 403
+
+
+def test_certification_authentication_is_explicit_and_admin_only(client, admin_token, monkeypatch):
+    from unittest.mock import AsyncMock
+    diagnostic = AsyncMock(return_value={"environment": "sandbox",
+        "authentication_attempted": True, "provider_credentials_authenticated": True,
+        "dispatch_authorized": False, "production_configuration_changed": False})
+    monkeypatch.setattr("services.mpesa_certification_readiness.authenticate_pass_through_sandbox", diagnostic)
+    path = ROOT + "/certification/authenticate"
+    client.cookies.clear()
+    assert client.post(path).status_code in (401, 403)
+    diagnostic.assert_not_called()
+    headers = auth(admin_token)
+    assert client.get(path, headers=headers).status_code == 405
+    diagnostic.assert_not_called()
+    response = client.post(path, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["provider_credentials_authenticated"] is True
+    assert response.json()["dispatch_authorized"] is False
+    diagnostic.assert_awaited_once()
+    with SessionLocal() as db:
+        db.add(User(email="cert-auth-limited@example.com", full_name="Limited",
+                    password_hash=hash_password("Password123!"), role="merchant_admin"))
+        db.commit()
+    client.cookies.clear()
+    login = client.post("/api/v1/auth/login", json={"email":"cert-auth-limited@example.com",
+                                                    "password":"Password123!"})
+    assert login.status_code == 200
+    assert client.post(path, headers=auth(login.json()["access_token"])).status_code == 403
+    diagnostic.assert_awaited_once()

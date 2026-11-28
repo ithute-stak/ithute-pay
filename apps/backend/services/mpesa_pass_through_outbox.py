@@ -335,3 +335,300 @@ def build_sandbox_adapter_arguments(db: Session, *, merchant_id: str, applicatio
     args["receiver_party_code" if method == "transfer" else "phone"] = party
     return {"adapter_method": method, "required_shortcode": shortcode,
             "arguments": args, "dispatch_authorized": False}
+
+
+def prepare_claimed_sandbox_simulation(*, merchant_id: str, application_id: str,
+                                       transaction_id: str, leg: str) -> dict:
+    """Own the transaction boundary for an offline worker claim.
+
+    The caller receives a wire plan only after the durable claim commits.
+    This never authorizes actual provider submission. A restart must query
+    or investigate the existing reference, not issue another claim.
+    """
+    from database.session import SessionLocal
+    scope = dict(merchant_id=merchant_id, application_id=application_id,
+                 transaction_id=transaction_id)
+    with SessionLocal() as db:
+        try:
+            row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                             record_id=transaction_id, for_update=True)
+            if row is None:
+                raise TransactionError("Transaction not found in authorized scope")
+            from database.models import Application
+            app = db.get(Application, application_id)
+            if app is None or app.merchant_id != merchant_id or app.environment != "test":
+                raise TransactionError("Simulation requires authorized test application")
+            if leg not in {"funding", "onward"}:
+                raise TransactionError("Unsupported simulation movement")
+            intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+                MpesaPassThroughOperationIntent.transaction_id == row.id,
+                MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+                MpesaPassThroughOperationIntent.application_id == application_id,
+                MpesaPassThroughOperationIntent.leg == leg).with_for_update())
+            if intent is not None and intent.state == "needs_reconciliation":
+                return {"claimed": False, "action": "reconcile_existing_reference",
+                        "reference": intent.reference, "dispatch_authorized": False}
+            plan = build_sandbox_adapter_arguments(db, **scope, leg=leg)
+            reference = plan["arguments"]["transaction_reference"]
+            if not claim_sandbox_simulation(db, **scope, leg=leg, reference=reference):
+                db.rollback()
+                return {"claimed": False, "action": "reconcile_existing_reference",
+                        "reference": reference, "dispatch_authorized": False}
+            db.commit()
+            return {**plan, "claimed": True, "action": "offline_simulation_only",
+                    "reference": reference, "provider_called": False}
+        except Exception:
+            db.rollback()
+            raise
+
+
+async def execute_claimed_offline_wire_simulation(plan: dict, *, account_shortcode: str,
+                                                 simulated_http_status: int = 200,
+                                                 simulated_response: dict | None = None) -> dict:
+    """Exercise real wire serialization using a sealed, network-free transport.
+
+    Synthetic responses are never settlement evidence. No injected client,
+    credentials, callback or network transport is accepted by this function.
+    """
+    from integrations.mpesa.client import MpesaClient
+    from integrations.base import ProviderResult
+    if (plan.get("claimed") is not True or plan.get("action") != "offline_simulation_only"
+            or plan.get("dispatch_authorized") is not False
+            or plan.get("provider_called") is not False):
+        raise TransactionError("Committed offline simulation plan required")
+    if not account_shortcode or account_shortcode != plan.get("required_shortcode"):
+        raise TransactionError("Simulation account identity mismatch")
+    method = plan.get("adapter_method")
+    if method not in {"collect", "transfer", "payout"}:
+        raise TransactionError("Unsupported simulation method")
+    args = plan["arguments"]
+    if (args.get("currency") != "LSL"
+            or args.get("transaction_reference") != plan.get("reference")
+            or args.get("third_party_conversation_id") != plan.get("reference")):
+        raise TransactionError("Simulation wire identity mismatch")
+
+    class OfflineTransport(MpesaClient):
+        def __init__(self):
+            self.shortcode = account_shortcode
+            self.country = "LES"
+            self.currency = "LSL"
+            self.environment = "sandbox"
+            self.calls = 0
+
+        async def _request(self, method, suffix, **kwargs):
+            self.calls += 1
+            if simulated_response is None:
+                raise TimeoutError("Synthetic transport timeout")
+            return simulated_http_status, dict(simulated_response)
+
+    client = OfflineTransport()
+    try:
+        result: ProviderResult = await getattr(client, method)(**args)
+        observed_status = result.status if result.status in {"succeeded", "failed", "processing", "unknown"} else "unknown"
+    except Exception:
+        observed_status = "unknown"
+    return {
+        "reference": plan["reference"], "simulation_only": True,
+        "synthetic_observed_status": observed_status,
+        "wire_attempted": client.calls == 1,
+        "action": "reconcile_existing_reference",
+        "provider_called": False, "dispatch_authorized": False,
+        "accounting_authorized": False, "retry_authorized": False,
+    }
+
+
+def assess_sandbox_refund_eligibility(db: Session, *, merchant_id: str,
+                                      application_id: str, transaction_id: str) -> dict:
+    """Read-only full outgoing refund eligibility; never reserve or send.
+
+    Require matched funding cost and original receipt, and do not treat
+    ambiguous onward status as failure. Actual refund fee/permission evidence
+    must be independently certified before an execution path is added.
+    """
+    from database.models import Application
+    from database.models.mpesa_pass_through_identity import (
+        MpesaPassThroughLegIdentity, MpesaPassThroughProviderReceipt,
+    )
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Refund assessment requires authorized test application")
+    snapshot = row.quote_snapshot or {}
+    blockers = []
+    if snapshot.get("reversal_holds"):
+        blockers.append("reversal_investigation")
+    if row.direction != "outgoing" or row.currency != "LSL" or row.provider_cost != 0 or snapshot.get("fee_payer") != "tenant":
+        blockers.append("unsupported_refund_cost_policy")
+    if row.funding_status != "succeeded":
+        blockers.append("funding_not_confirmed")
+    if row.onward_status not in {"not_started", "failed"}:
+        blockers.append("onward_not_safely_excluded")
+    if row.refund_status != "not_started":
+        blockers.append("existing_refund_must_be_reconciled")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == "funding"))
+    binding = receipt = None
+    if intent is not None:
+        binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+            MpesaPassThroughLegIdentity.intent_id == intent.id))
+        receipt = db.scalar(select(MpesaPassThroughProviderReceipt).where(
+            MpesaPassThroughProviderReceipt.intent_id == intent.id))
+    saved = snapshot.get("verified_provider_costs", {}).get("funding") or {}
+    gross = format(row.funding_amount, ".2f")
+    if (intent is None or intent.provider != "mpesa" or intent.state != "closed"
+            or intent.reference != row.funding_reference or intent.amount != row.funding_amount
+            or intent.currency != "LSL" or binding is None or receipt is None
+            or receipt.provider != "mpesa" or receipt.provider_transaction_id != row.funding_provider_id
+            or receipt.canonical_evidence_hash != row.funding_evidence_hash
+            or saved.get("provider_id") != row.funding_provider_id
+            or saved.get("movement_digest") != row.funding_evidence_hash
+            or not saved.get("cost_digest") or saved.get("source_debit") != gross
+            or saved.get("net") != gross or saved.get("fee") != "0.00"):
+        blockers.append("matched_funding_settlement_required")
+    if row.onward_status == "failed":
+        # Failure must be reconciled, not inferred from an HTTP error or timeout.
+        onward = db.scalar(select(MpesaPassThroughOperationIntent).where(
+            MpesaPassThroughOperationIntent.transaction_id == row.id,
+            MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+            MpesaPassThroughOperationIntent.application_id == application_id,
+            MpesaPassThroughOperationIntent.leg == "onward"))
+        if (onward is None or onward.state != "closed" or onward.provider != "mpesa"
+                or onward.reference != row.onward_reference or not row.onward_evidence_hash):
+            blockers.append("matched_onward_failure_required")
+    return {"environment": "test", "eligibility_blockers": blockers,
+            "structurally_eligible": not blockers,
+            "proposed_refund_amount": gross if not blockers else None,
+            "recognized_revenue": "0.00" if not blockers else None,
+            "provider_refund_policy_verified": False, "refund_execution_authorized": False,
+            "reservation_authorized": False, "accounting_authorized": False}
+
+
+async def run_single_sandbox_submission(*, merchant_id: str, application_id: str,
+                                        transaction_id: str, leg: str,
+                                        confirm_sandbox_submission: bool = False) -> dict:
+    """Internal sandbox sender, disabled unless explicit fixture configuration exists.
+
+    Dedicated configuration metadata must list disposable approved test parties,
+    explicit capabilities and the approval reference. No public route, production
+    fallback, shortcode override or submission replay. Metadata is not proof of
+    external approval; trusted operators must verify it before enabling access.
+    """
+    import re
+    import httpx
+    from database.session import SessionLocal
+    from database.models import GatewayProviderConfiguration
+    from services.gateway_configuration import decrypted_api_key
+    from integrations.mpesa.client import MpesaRuntimeConfig
+    from integrations.mpesa.hardened import HardenedMpesaClient
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+
+    if confirm_sandbox_submission is not True:
+        raise TransactionError("Explicit sandbox submission confirmation required")
+    scope = dict(merchant_id=merchant_id, application_id=application_id,
+                 transaction_id=transaction_id, leg=leg)
+
+    class SingleSubmissionClient(HardenedMpesaClient):
+        async def _request(self, method, suffix, *, params=None, json_body=None):
+            if (self.environment != "sandbox" or self.base != "https://openapi.m-pesa.com"
+                    or self.market != "vodacomLES" or self.country != "LES" or self.currency != "LSL"
+                    or method != "POST" or suffix not in {
+                        "c2bPayment/singleStage/", "b2cPayment/", "b2bPayment/"}):
+                raise TransactionError("Sandbox-only submission boundary")
+            self._validate_request_contract(suffix, params=params, json_body=json_body)
+            session = await self.get_session_key()
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as transport:
+                response = await transport.request(method, self._url(suffix), params=params,
+                    json=json_body, headers={"Authorization": self._auth_header(session),
+                    "Origin": self.origin, "Content-Type": "application/json"})
+            # Even explicit session errors are reconciled, never replayed.
+            return response.status_code, self._payload(response)
+
+    with SessionLocal() as db:
+        if not assess_pass_through_sandbox_configuration(db)["configuration_complete"]:
+            raise TransactionError("Sandbox configuration incomplete")
+        rows = db.scalars(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa",
+            GatewayProviderConfiguration.environment == "sandbox")).all()
+        if len(rows) != 1:
+            raise TransactionError("Unique sandbox configuration required")
+        cfg = rows[0]
+        if (not cfg.enabled or cfg.mode != "live"
+                or cfg.base_url not in {"https://openapi.m-pesa.com", "https://openapi.m-pesa.com/"}
+                or (cfg.country, cfg.currency, cfg.market) != ("LES", "LSL", "vodacomLES")):
+            raise TransactionError("Sandbox configuration scope mismatch")
+        metadata = cfg.metadata_json or {}
+        fixtures = metadata.get("pass_through_sandbox_fixtures") or {}
+        if (not isinstance(fixtures, dict) or fixtures.get("enabled") is not True
+                or not isinstance(fixtures.get("approval_reference"), str)
+                or not fixtures["approval_reference"].strip()
+                or fixtures.get("application_id") != application_id):
+            raise TransactionError("Approved disposable sandbox fixtures required")
+        row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                         record_id=transaction_id, for_update=True)
+        if row is None:
+            raise TransactionError("Transaction outside authorized scope")
+        plan = build_sandbox_adapter_arguments(db, **scope)
+        method = plan["adapter_method"]
+        args = plan["arguments"]
+        capability = {"collect":"collection", "payout":"payout", "transfer":"transfer"}[method]
+        capabilities = metadata.get("capabilities") or {}
+        if not isinstance(capabilities, dict) or capabilities.get(capability) is not True or capabilities.get("query") is not True:
+            raise TransactionError("Explicit sandbox product capabilities required")
+        shortcode = plan["required_shortcode"]
+        party = args.get("receiver_party_code") if method == "transfer" else args.get("phone")
+        allowed = fixtures.get("receiver_shortcodes" if method == "transfer" else "test_msisdns")
+        if (shortcode != cfg.service_provider_code or not re.fullmatch(r"[0-9A-Za-z]{4,12}", shortcode)
+                or not isinstance(allowed, list) or party not in allowed
+                or not isinstance(party, str)
+                or not re.fullmatch(r"[0-9A-Za-z]{4,12}" if method == "transfer" else r"[0-9]{11,14}", party)
+                or party == shortcode):
+            raise TransactionError("Sandbox party not in approved fixture scope")
+        ref = args["transaction_reference"]
+        if not re.fullmatch(r"[0-9A-Za-z]{1,20}", ref):
+            raise TransactionError("Reference must support submission and query without modification")
+        max_amount = fixtures.get("max_amount_lsl")
+        if not isinstance(max_amount, str):
+            raise TransactionError("Explicit sandbox amount cap required")
+        try:
+            cap = Decimal(max_amount)
+        except ArithmeticError as exc:
+            raise TransactionError("Invalid sandbox amount cap") from exc
+        amount = args["amount"]
+        if (not cap.is_finite() or not amount.is_finite() or not 0 < amount <= cap
+                or cap.as_tuple().exponent < -2 or args["currency"] != "LSL"):
+            raise TransactionError("Sandbox amount exceeds approved fixture cap")
+        api_key = decrypted_api_key(cfg)
+        if not api_key or not cfg.public_key:
+            raise TransactionError("Sandbox credentials missing")
+        runtime = MpesaRuntimeConfig(base_url=cfg.base_url, environment="sandbox",
+            country="LES", currency="LSL", market="vodacomLES", service_provider_code=shortcode,
+            api_key=api_key, public_key=cfg.public_key, origin=cfg.origin,
+            session_activation_seconds=cfg.session_activation_seconds,
+            timeout_seconds=cfg.request_timeout_seconds)
+        # Persist claim before the first possible external payment request.
+        if not claim_sandbox_simulation(db, **scope, reference=ref):
+            raise TransactionError("Existing claim requires reconciliation")
+        db.commit()
+    status = "unknown"
+    client = None
+    try:
+        client = SingleSubmissionClient(runtime)
+        if client._redis is not None:
+            await client._redis.aclose()
+        client._redis = None
+        result = await getattr(client, method)(**args)
+        if result.accepted:
+            status = "accepted_unverified"
+    except Exception:
+        pass
+    finally:
+        if client is not None:
+            client._session_memory = None
+    return {"reference": ref, "environment": "sandbox", "submission_claimed": True,
+            "observed_status": status, "action": "reconcile_existing_reference",
+            "accounting_authorized": False, "retry_authorized": False,
+            "live_dispatch_authorized": False}

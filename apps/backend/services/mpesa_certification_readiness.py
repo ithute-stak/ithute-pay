@@ -93,3 +93,132 @@ def assess_mpesa_sandbox_certification(
             "Independently authenticate every submitted reference with M-PESA and obtain formal authorization"
         ),
     }
+
+
+PASS_THROUGH_CASES = (
+    "c2b_customer_funding", "c2b_merchant_settlement",
+    "b2c_merchant_funding", "b2c_customer_settlement",
+    "b2b_sender_funding", "b2b_recipient_settlement",
+    "unknown_outcome_recovery", "duplicate_confirmation",
+    "failed_onward_refund", "reversal_investigation",
+)
+
+
+def assess_pass_through_sandbox_configuration(db) -> dict:
+    """Read-only preflight; never activate a provider or disclose credentials."""
+    from sqlalchemy import select
+    from database.models import GatewayProviderConfiguration
+    from integrations.mpesa.contracts import normalize_mpesa_capabilities
+    rows = db.scalars(select(GatewayProviderConfiguration).where(
+        GatewayProviderConfiguration.provider == "mpesa",
+        GatewayProviderConfiguration.environment == "sandbox",
+    )).all()
+    blockers = []
+    if len(rows) != 1:
+        blockers.append("exactly_one_sandbox_configuration_required")
+    else:
+        cfg = rows[0]
+        if not cfg.enabled or cfg.mode != "live":
+            blockers.append("sandbox_provider_access_not_enabled")
+        if not cfg.api_key_ciphertext or not cfg.public_key:
+            blockers.append("missing_sandbox_credentials")
+        if not cfg.service_provider_code or not cfg.origin:
+            blockers.append("missing_sandbox_account_identity")
+        if cfg.country != "LES" or cfg.currency != "LSL" or cfg.market != "vodacomLES":
+            blockers.append("sandbox_market_mismatch")
+        capabilities = normalize_mpesa_capabilities((cfg.metadata_json or {}).get("capabilities"))
+        # Capability declarations are local configuration, not provider approval.
+        if not capabilities.get("query"):
+            blockers.append("missing_configured_query_capability")
+    return {"environment": "sandbox", "configuration_blockers": blockers,
+            "configuration_complete": not blockers,
+            "required_cases": list(PASS_THROUGH_CASES),
+            "provider_approval_verified": False,
+            "provider_credentials_authenticated": False,
+            "dispatch_authorized": False, "production_configuration_changed": False}
+
+
+async def authenticate_pass_through_sandbox(db) -> dict:
+    """Explicit session-only diagnostic. No payment calls or shared cache writes."""
+    from sqlalchemy import select
+    from database.models import GatewayProviderConfiguration
+    from providers.mpesa.factory import _gateway_client
+    from integrations.mpesa.client import MpesaError
+    from urllib.parse import urlsplit
+
+    result = assess_pass_through_sandbox_configuration(db)
+    result["authentication_attempted"] = False
+    if not result["configuration_complete"]:
+        return result
+    rows = db.scalars(select(GatewayProviderConfiguration).where(
+        GatewayProviderConfiguration.provider == "mpesa",
+        GatewayProviderConfiguration.environment == "sandbox",
+    )).all()
+    if len(rows) != 1:
+        result["authentication_blocker"] = "sandbox_configuration_changed"
+        return result
+    cfg = rows[0]
+    # Strict approved host: no alternate host, userinfo, query or path.
+    # Never transmit credentials to a merchant-supplied URL.
+    try:
+        url = urlsplit(cfg.base_url)
+        valid_host = (url.scheme == "https" and url.netloc == "openapi.m-pesa.com"
+                      and url.path in {"", "/"} and not url.query and not url.fragment)
+    except (ValueError, TypeError):
+        valid_host = False
+    if not valid_host or cfg.environment != "sandbox" or cfg.mode != "live" or not cfg.enabled:
+        result["authentication_blocker"] = "sandbox_endpoint_or_environment_mismatch"
+        return result
+    try:
+        client = _gateway_client(cfg)
+        if (client.environment != "sandbox" or client.country != "LES"
+                or client.currency != "LSL" or client.market != "vodacomLES"
+                or client.base != "https://openapi.m-pesa.com"):
+            result["authentication_blocker"] = "sandbox_client_scope_mismatch"
+            return result
+        # Do not replace or read shared Redis session keys.
+        if client._redis is not None:
+            await client._redis.aclose()
+        client._redis = None
+        client.session_activation_seconds = 0
+        result["authentication_attempted"] = True
+        result["provider_credentials_authenticated"] = bool(await client.get_session_key(force=True))
+    except MpesaError:
+        result["authentication_blocker"] = "provider_session_rejected"
+    except Exception:
+        result["authentication_blocker"] = "sandbox_session_unavailable"
+    return result
+
+
+def assess_pass_through_evidence(*, case_references: Mapping[str, str],
+                                 provider_approval_reference: str | None,
+                                 tariff_reference: str | None,
+                                 statement_reference: str | None,
+                                 independent_review_reference: str | None) -> dict:
+    """Assess reference completeness only; never treat references as proof."""
+    if not isinstance(case_references, Mapping):
+        raise ValueError("Case references must be a mapping")
+    if set(case_references) - set(PASS_THROUGH_CASES):
+        raise ValueError("Unknown pass-through certification case")
+    def valid(value):
+        return isinstance(value, str) and bool(value.strip()) and len(value) <= 200
+    missing = [case for case in PASS_THROUGH_CASES if not valid(case_references.get(case))]
+    supplied = [case_references[case].strip() for case in PASS_THROUGH_CASES if case not in missing]
+    duplicate = len(supplied) != len(set(supplied))
+    documents = {
+        "provider_approval": valid(provider_approval_reference),
+        "tariff": valid(tariff_reference),
+        "independent_statement": valid(statement_reference),
+        "independent_review": valid(independent_review_reference),
+    }
+    return {
+        "environment": "sandbox",
+        "missing_cases": missing,
+        "duplicate_case_references": duplicate,
+        "document_references_present": documents,
+        "documentation_complete": not missing and not duplicate and all(documents.values()),
+        "provider_evidence_authenticated": False,
+        "independent_settlement_verified": False,
+        "dispatch_authorized": False,
+        "live_transfer_approved": False,
+    }

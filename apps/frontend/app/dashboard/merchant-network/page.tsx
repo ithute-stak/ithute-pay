@@ -6,7 +6,7 @@ import { PageHeader } from "@/components/dashboard/page-header";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
-import { useAdminMerchantsQuery, useAdminApplicationsQuery, usePassThroughRevenueQuery, useConsolidatedPassThroughRevenueQuery, useMeQuery } from "@/store/gateway-api";
+import { useAdminMerchantsQuery, useAdminApplicationsQuery, usePassThroughRevenueQuery, useConsolidatedPassThroughRevenueQuery, useMeQuery, useAuthenticatePassThroughSandboxMutation, usePassThroughCertificationReadinessQuery, usePreviewPassThroughCertificationEvidenceMutation, type CertificationEvidence } from "@/store/gateway-api";
 
 type Master = { merchant_id: string; active: boolean; shared_custody_enabled: boolean };
 type Tenant = { id: string; master_merchant_id: string; tenant_merchant_id: string; custody_mode: string; status: string; kyc_status: string };
@@ -61,6 +61,59 @@ function reportDates(period: string) {
   if (period === "quarter") { start.setUTCDate(1); start.setUTCMonth(Math.floor(start.getUTCMonth() / 3) * 3); }
   if (period === "year") { start.setUTCDate(1); start.setUTCMonth(0); }
   return { start_date: accountingDate(start), end_date: accountingDate(today) };
+}
+
+function CertificationPanel() {
+  const readiness = usePassThroughCertificationReadinessQuery(undefined, { refetchOnMountOrArgChange: true });
+  const [authenticate, authentication] = useAuthenticatePassThroughSandboxMutation();
+  const [preview, assessment] = usePreviewPassThroughCertificationEvidenceMutation();
+  const [evidence, setEvidence] = useState<CertificationEvidence>({
+    case_references: {}, provider_approval_reference: "", tariff_reference: "",
+    statement_reference: "", independent_review_reference: "",
+  });
+  const [submitted, setSubmitted] = useState<string | null>(null);
+  const result = submitted === JSON.stringify(evidence) && !assessment.isLoading && !assessment.isError ? assessment.data : undefined;
+  const data = !readiness.isError && !readiness.isFetching ? readiness.currentData : undefined;
+  const label = (value: string) => value.replaceAll("_", " ");
+  return <Card>
+    <CardHeader><CardTitle>M-PESA pass-through certification · Sandbox</CardTitle></CardHeader>
+    <CardContent className="space-y-4">
+      <p className="text-sm text-muted-foreground">Readiness and documentation preview only. No payment execution, credential entry, production activation or evidence storage.</p>
+      <Button type="button" variant="secondary" disabled={readiness.isFetching || authentication.isLoading} onClick={() => { authentication.reset(); assessment.reset(); setSubmitted(null); void readiness.refetch(); }}>Refresh readiness</Button>
+      {readiness.isFetching && <p role="status">Checking sandbox configuration…</p>}
+      {readiness.isError && <p role="alert" className="text-sm text-red-700">Unable to verify current sandbox readiness.</p>}
+      {data && <>
+        <p className="text-sm font-semibold">{data.configuration_complete ? "Configuration fields complete — provider authentication not verified" : "Sandbox configuration blocked"}</p>
+        <ul className="space-y-1 text-sm">{data.configuration_blockers.map(blocker => <li key={blocker}>{label(blocker)}</li>)}</ul>
+        <Button type="button" variant="secondary" disabled={!data.configuration_complete || authentication.isLoading}
+          onClick={() => void authenticate()}>Test sandbox authentication (no payments)</Button>
+        {authentication.isLoading && <p role="status">Requesting sandbox session…</p>}
+        {authentication.isError && <p role="alert">Sandbox authentication diagnostic unavailable.</p>}
+        {!authentication.isLoading && !authentication.isError && authentication.data && <div role="status" className="text-sm">
+          {authentication.data.provider_credentials_authenticated ? "Sandbox session authenticated at time of check. Payment permissions and settlement remain unverified." : "Sandbox authentication not verified."}
+          {authentication.data.authentication_blocker && <p>{label(authentication.data.authentication_blocker)}</p>}
+          {authentication.data.configuration_blockers.map(blocker => <p key={blocker}>{label(blocker)}</p>)}
+        </div>}
+        <form className="space-y-3" onSubmit={e => { e.preventDefault(); setSubmitted(JSON.stringify(evidence)); void preview(evidence); }}>
+          <p className="text-sm font-semibold">External evidence references (not credentials or raw provider responses)</p>
+          <div className="grid gap-3 md:grid-cols-2">
+            {(["provider_approval_reference", "tariff_reference", "statement_reference", "independent_review_reference"] as const).map(key => <label className="text-sm capitalize" key={key}>{label(key)}<Input maxLength={200} value={evidence[key]} onChange={e => { assessment.reset(); setSubmitted(null); setEvidence(old => ({ ...old, [key]: e.target.value })); }}/></label>)}
+            {data.required_cases.map(key => <label className="text-sm capitalize" key={key}>{label(key)}<Input maxLength={200} value={evidence.case_references[key] ?? ""} onChange={e => { assessment.reset(); setSubmitted(null); setEvidence(old => ({ ...old, case_references: { ...old.case_references, [key]: e.target.value } })); }}/></label>)}
+          </div>
+          <Button disabled={assessment.isLoading}>Preview evidence completeness</Button>
+        </form>
+      </>}
+      {assessment.isError && <p role="alert" className="text-sm text-red-700">Evidence preview failed. No certification has been established.</p>}
+      {result && <div role="status" className="rounded-xl border border-border p-3 text-sm space-y-2">
+        <p className="font-semibold">{result.documentation_complete ? "Documentation references complete — not independently verified" : "Documentation incomplete"}</p>
+        <p>Missing scenarios: {result.missing_cases.length}</p>
+        {result.missing_cases.map(key => <p key={key}>{label(key)}</p>)}
+        {result.duplicate_case_references && <p>Duplicate case references detected.</p>}
+        {Object.entries(result.document_references_present).map(([key, present]) => <p key={key}>{label(key)}: {present ? "Reference supplied" : "Missing"}</p>)}
+      </div>}
+      <p className="text-sm font-semibold">Live pass-through execution remains disabled.</p>
+    </CardContent>
+  </Card>;
 }
 
 export default function MerchantNetworkPage() {
@@ -152,6 +205,7 @@ export default function MerchantNetworkPage() {
       {error && <div className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">{error}</div>}
       {message && <div className="rounded-xl border border-green-200 bg-green-50 p-3 text-sm text-green-800">{message}</div>}
     </div>
+    <CertificationPanel />
     <Card><CardHeader><CardTitle>Consolidated pass-through financial report</CardTitle></CardHeader>
       <CardContent className="space-y-4">
         <p className="text-sm text-muted-foreground">Posted service revenue and tenant-borne provider costs for the selected accounting period. Closing balances include earlier postings. Not verified M-Pesa wallet balances.</p>
