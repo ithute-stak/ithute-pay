@@ -425,3 +425,36 @@ async def test_offline_worker_wire_outcomes_never_authorize_settlement(response,
     replay = prepare_claimed_sandbox_simulation(**scope)
     with pytest.raises(TransactionError, match="Committed offline"):
         await execute_claimed_offline_wire_simulation(replay, account_shortcode="YYYY")
+
+
+def test_recovery_coordinator_rechecks_stale_reservation_without_dispatch():
+    from datetime import datetime, timedelta, timezone
+    from services.mpesa_pass_through_recovery_inbox import coordinate_sandbox_recovery
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation
+    from database.models import JournalEntry
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "recovery-cycle")
+        scope = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **scope, reference="recover-cycle")
+        kwargs = dict(merchant_id=merchant, application_id=app,
+                      now=datetime.now(timezone.utc) + timedelta(hours=1))
+        first = coordinate_sandbox_recovery(db, **kwargs)
+        assert first["manual_review"] == 1
+        bind_leg_identity(db, **scope, source_party="YYYY", destination_party="XXXX")
+        assert claim_sandbox_simulation(db, **scope, reference="recover-cycle")
+        db.commit()
+    with SessionLocal() as db:
+        first = coordinate_sandbox_recovery(db, **kwargs)
+        second = coordinate_sandbox_recovery(db, **kwargs)
+        assert first == second
+        assert first["query_candidates"] == 1
+        assert first["items"][0]["reference"] == "recover-cycle"
+        for key in ("provider_called", "accounting_authorized", "dispatch_authorized", "retry_authorized"):
+            assert not first[key]
+        assert not db.scalars(select(JournalEntry)).all()
+        assert not claim_sandbox_simulation(db, **scope, reference="recover-cycle")
+        db.get(Application, app).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            coordinate_sandbox_recovery(db, **kwargs)

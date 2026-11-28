@@ -106,3 +106,57 @@ def recovery_summary(items: list[RecoveryQueueItem]) -> dict[str, int]:
         "onward": sum(x.leg == "onward" for x in items),
         "refund": sum(x.leg == "refund" for x in items),
     }
+
+
+def coordinate_sandbox_recovery(db: Session, *, merchant_id: str, application_id: str,
+                                now: datetime | None = None, age_seconds: int = 300,
+                                limit: int = 100) -> dict:
+    """Bounded read-only recovery planning cycle; no network or financial writes.
+
+    Recheck each stale reservation against its transaction lifecycle rather than
+    treating inbox age or a previous worker decision as execution authority.
+    """
+    from database.models import Application
+    from services.mpesa_pass_through_outbox import plan_next_operation
+    app = db.get(Application, application_id)
+    if app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Recovery coordinator requires authorized test application")
+    items = scan_recovery_inbox(db, merchant_id=merchant_id,
+        application_id=application_id, now=now, age_seconds=age_seconds, limit=limit)
+    decisions = []
+    seen = set()
+    for item in items:
+        action = "manual_review"
+        reason = "Reservation and lifecycle do not match"
+        if item.transaction_id not in seen:
+            seen.add(item.transaction_id)
+            try:
+                plan = plan_next_operation(db, merchant_id=merchant_id,
+                    application_id=application_id, transaction_id=item.transaction_id)
+                if plan["action"] == "reversal_investigation":
+                    reason = "Reversal hold requires independent investigation"
+                elif (item.action == "query_original_reference"
+                        and plan["action"] == "query_existing_reference"
+                        and plan["leg"] == item.leg and plan["reference"] == item.reference):
+                    action = "query_original_reference"
+                    reason = "Read-only reconciliation of existing reference required"
+            except TransactionError:
+                reason = "Transaction lifecycle requires independent investigation"
+        else:
+            reason = "Multiple unresolved movements require manual review"
+            # Do not schedule even the first query when multiple stale intents
+            # for one transaction appear in the current batch.
+            for previous in decisions:
+                if previous["transaction_id"] == item.transaction_id:
+                    previous["action"] = "manual_review"
+                    previous["reason"] = reason
+        decisions.append({"transaction_id": item.transaction_id,
+            "intent_id": item.intent_id, "reference": item.reference, "leg": item.leg,
+            "action": action, "reason": reason, "dispatch_authorized": False,
+            "retry_authorized": False})
+    return {"environment": "test", "items": decisions,
+            "query_candidates": sum(d["action"] == "query_original_reference" for d in decisions),
+            "manual_review": sum(d["action"] == "manual_review" for d in decisions),
+            "limit_reached": len(items) == limit,
+            "provider_called": False, "accounting_authorized": False,
+            "dispatch_authorized": False, "retry_authorized": False}
