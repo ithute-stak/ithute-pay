@@ -234,3 +234,33 @@ def test_certification_readiness_and_preview_require_platform_admin(client, admi
     limited = auth(login.json()["access_token"])
     assert client.get(path + "/readiness", headers=limited).status_code == 403
     assert client.post(path + "/evidence/preview", headers=limited, json={}).status_code == 403
+
+
+def test_certification_authentication_is_explicit_and_admin_only(client, admin_token, monkeypatch):
+    from unittest.mock import AsyncMock
+    diagnostic = AsyncMock(return_value={"environment": "sandbox",
+        "authentication_attempted": True, "provider_credentials_authenticated": True,
+        "dispatch_authorized": False, "production_configuration_changed": False})
+    monkeypatch.setattr("services.mpesa_certification_readiness.authenticate_pass_through_sandbox", diagnostic)
+    path = ROOT + "/certification/authenticate"
+    client.cookies.clear()
+    assert client.post(path).status_code in (401, 403)
+    diagnostic.assert_not_called()
+    headers = auth(admin_token)
+    assert client.get(path, headers=headers).status_code == 405
+    diagnostic.assert_not_called()
+    response = client.post(path, headers=headers)
+    assert response.status_code == 200, response.text
+    assert response.json()["provider_credentials_authenticated"] is True
+    assert response.json()["dispatch_authorized"] is False
+    diagnostic.assert_awaited_once()
+    with SessionLocal() as db:
+        db.add(User(email="cert-auth-limited@example.com", full_name="Limited",
+                    password_hash=hash_password("Password123!"), role="merchant_admin"))
+        db.commit()
+    client.cookies.clear()
+    login = client.post("/api/v1/auth/login", json={"email":"cert-auth-limited@example.com",
+                                                    "password":"Password123!"})
+    assert login.status_code == 200
+    assert client.post(path, headers=auth(login.json()["access_token"])).status_code == 403
+    diagnostic.assert_awaited_once()

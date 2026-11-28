@@ -88,6 +88,11 @@ export const gatewayApi = createApi({
       query: () => "/admin/mpesa-pass-through/certification/readiness",
       keepUnusedDataFor: 0,
     }),
+    authenticatePassThroughSandbox: builder.mutation<CertificationReadiness & {
+      authentication_attempted: boolean; authentication_blocker?: string;
+    }, void>({
+      query: () => ({ url: "/admin/mpesa-pass-through/certification/authenticate", method: "POST" }),
+    }),
     previewPassThroughCertificationEvidence: builder.mutation<CertificationPreview, CertificationEvidence>({
       query: (body) => ({ url: "/admin/mpesa-pass-through/certification/evidence/preview", method: "POST", body }),
     }),
@@ -249,7 +254,7 @@ export const gatewayApi = createApi({
 });
 
 export const {
-  usePassThroughCertificationReadinessQuery, usePreviewPassThroughCertificationEvidenceMutation,
+  useAuthenticatePassThroughSandboxMutation, usePassThroughCertificationReadinessQuery, usePreviewPassThroughCertificationEvidenceMutation,
   useMeQuery, useLoginMutation, useLogoutMutation, useDashboardQuery,
   useAdminPaymentsQuery, useAdminPayoutsQuery, useAdminTransactionsQuery,
   useAdminTransfersQuery, useAdminAuthorizationsQuery, useAdminReversalsQuery,

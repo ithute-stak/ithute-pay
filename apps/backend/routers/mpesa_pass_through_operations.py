@@ -567,3 +567,11 @@ def certification_evidence_preview(payload: CertificationEvidenceRequest,
         return assess_pass_through_evidence(**payload.model_dump())
     except ValueError:
         raise HTTPException(status_code=422, detail="Invalid certification case inventory") from None
+
+
+@router.post("/certification/authenticate")
+async def certification_authenticate(db: Session = Depends(get_db),
+                                     _: User = Depends(_operator)):
+    """Session-only sandbox diagnostic; never dispatch a financial operation."""
+    from services.mpesa_certification_readiness import authenticate_pass_through_sandbox
+    return await authenticate_pass_through_sandbox(db)
