@@ -293,3 +293,55 @@ def preview_incoming_refund_capacity(quote, *, actual_provider_cost: Decimal,
     return {"available_funds": available, "required_funds": required,
             "shortfall": max(ZERO, required - available),
             "recognized_revenue": ZERO, "refund_execution_authorized": False}
+
+
+def preview_full_outgoing_funding_reversal(
+    db: Session, *, merchant_id: str, application_id: str, transaction_id: str,
+    original_provider_id: str, reversal_provider_id: str,
+    actual_recovered_amount: Decimal, actual_reversal_cost: Decimal,
+    statement_reference: str,
+) -> dict:
+    """Preview compensation ONLY for full zero-cost funding reversal before payout.
+
+    Recovery amount means funds restored to the original sender, not funds
+    received by IthutePay. Do not generalize to partial recovery, completed
+    onward settlement, incoming funding or reversal of an onward payment.
+    """
+    from services.mpesa_pass_through_reconciliation import preview_reversal_recovery
+    recovery = preview_reversal_recovery(db, merchant_id=merchant_id,
+        application_id=application_id, transaction_id=transaction_id, leg="funding",
+        original_provider_id=original_provider_id, reversal_provider_id=reversal_provider_id,
+        actual_recovered_amount=actual_recovered_amount,
+        actual_reversal_cost=actual_reversal_cost, statement_reference=statement_reference)
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    _require_outgoing(row)
+    tx = load_lifecycle(row)
+    if (tx.funding.status != LegStatus.SUCCEEDED
+            or tx.onward.status != LegStatus.NOT_STARTED
+            or tx.refund.status != LegStatus.NOT_STARTED
+            or actual_recovered_amount != row.funding_amount or actual_reversal_cost != ZERO):
+        raise TransactionError("Only full zero-cost funding reversal before onward or refund is supported")
+    entries = db.scalars(select(JournalEntry).where(
+        JournalEntry.source_type == SOURCE, JournalEntry.source_id == row.id)).all()
+    if len(entries) != 1:
+        raise TransactionError("Exactly one original funding journal required")
+    entry = entries[0]
+    if (entry.merchant_id != merchant_id or entry.application_id != application_id
+            or entry.reference != "funding:" + row.id or entry.status != "posted"
+            or entry.currency != "LSL"):
+        raise TransactionError("Original funding journal mismatch")
+    gross = money(row.funding_amount)
+    actual = sorted((code, money(debit), money(credit)) for code, debit, credit in db.execute(
+        select(LedgerAccount.code, JournalLine.debit, JournalLine.credit)
+        .join(JournalLine, JournalLine.account_id == LedgerAccount.id)
+        .where(JournalLine.journal_entry_id == entry.id)).all())
+    if actual != [("1000", gross, ZERO), ("2000", ZERO, gross)]:
+        raise TransactionError("Original funding journal lines mismatch")
+    return {**recovery, "original_journal_id": entry.id,
+            "proposed_lines": [
+                {"account_code": "2000", "debit": format(gross, ".2f"), "credit": "0.00"},
+                {"account_code": "1000", "debit": "0.00", "credit": format(gross, ".2f")},
+            ],
+            "recognized_revenue_adjustment": "0.00", "journal_posted": False,
+            "accounting_authorized": False, "hold_release_authorized": False}

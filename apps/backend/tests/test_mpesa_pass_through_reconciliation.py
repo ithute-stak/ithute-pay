@@ -518,3 +518,28 @@ def test_reversal_recovery_preview_preserves_hold_and_original_journals():
                 preview_reversal_recovery(db, **{**args, **change})
         assert db.scalar(select(func.count(JournalEntry.id))) == 1
         db.commit()
+
+
+def test_full_funding_reversal_compensation_preview_is_balanced_and_nonposting():
+    from services.mpesa_pass_through_accounting import preview_full_outgoing_funding_reversal
+    from services.mpesa_pass_through_reconciliation import quarantine_authenticated_reversal
+    with SessionLocal() as db:
+        ids = new(db, "full-funding-reversal-preview")
+        funding(db, ids)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        args = dict(**ids, original_provider_id="vodacom-f-1",
+                    reversal_provider_id="reversal-1", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1020"), actual_reversal_cost=Decimal("0"))
+        result = preview_full_outgoing_funding_reversal(db, **args)
+        assert result["proposed_lines"] == [
+            {"account_code":"2000", "debit":"1020.00", "credit":"0.00"},
+            {"account_code":"1000", "debit":"0.00", "credit":"1020.00"}]
+        assert result["journal_posted"] is False
+        assert result["accounting_authorized"] is False
+        assert result["hold_release_authorized"] is False
+        for change in ({"actual_recovered_amount": Decimal("1000")},
+                       {"actual_reversal_cost": Decimal("1")}):
+            with pytest.raises(TransactionError, match="full zero-cost"):
+                preview_full_outgoing_funding_reversal(db, **{**args, **change})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
