@@ -453,3 +453,38 @@ def test_direct_live_accounting_cannot_bypass_settlement_receipts():
         with pytest.raises(TransactionError, match="Live accounting requires"):
             post_verified_outgoing(db, **ids)
         assert db.scalar(select(func.count(JournalEntry.id))) == 0
+
+
+def test_claimed_sandbox_settlement_preview_never_posts_or_authenticates():
+    from dataclasses import replace
+    from services.mpesa_pass_through_evidence import ProviderCostObservation
+    from services.mpesa_pass_through_outbox import claim_sandbox_simulation
+    from services.mpesa_pass_through_reconciliation import preview_claimed_sandbox_settlement
+    with SessionLocal() as db:
+        ids = new(db, "settlement-preview")
+        reserve_operation(db, **ids, leg="funding", reference="fund-a")
+        bind_leg_identity(db, **ids, leg="funding", source_party="YYYY", destination_party="XXXX")
+        cost = ProviderCostObservation("mpesa", "vodacom-f-1", "LSL", "XXXX",
+                                      "1020", "0", "1020", "1020")
+        args = dict(**ids, leg="funding", observation=observation(), cost_observation=cost)
+        with pytest.raises(TransactionError, match="claimed"):
+            preview_claimed_sandbox_settlement(db, **args)
+        assert claim_sandbox_simulation(db, **ids, leg="funding", reference="fund-a")
+        result = preview_claimed_sandbox_settlement(db, **args)
+        assert result["structurally_consistent"]
+        assert result["net_credit"] == "1020.00"
+        for key in ("provider_evidence_authenticated", "settlement_verified", "accounting_authorized",
+                    "dispatch_authorized", "retry_authorized"):
+            assert result[key] is False
+        for bad in (replace(cost, source_debit=None), replace(cost, source_debit="1030"),
+                    replace(cost, deducted_fee="10", net_credit="1010"),
+                    replace(cost, destination="OTHER")):
+            with pytest.raises(TransactionError):
+                preview_claimed_sandbox_settlement(db, **{**args, "cost_observation": bad})
+        with pytest.raises(TransactionError, match="Separate"):
+            preview_claimed_sandbox_settlement(db, **{**args, "observation": {"synthetic_observed_status":"succeeded"}})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 0
+        db.get(Application, ids["application_id"]).environment = "live"
+        db.flush()
+        with pytest.raises(TransactionError, match="test application"):
+            preview_claimed_sandbox_settlement(db, **args)

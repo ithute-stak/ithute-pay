@@ -253,3 +253,63 @@ def quarantine_authenticated_reversal(
         row.version += 1
         db.flush()
     return hold
+
+
+def preview_claimed_sandbox_settlement(
+    db: Session, *, merchant_id: str, application_id: str,
+    transaction_id: str, leg: str, observation: ProviderQueryObservation,
+    cost_observation: ProviderCostObservation,
+) -> dict:
+    """Non-posting validation of a claimed test movement and settlement fields.
+
+    Structural consistency is not authentication. Never call the posting
+    reconciler here, and never accept a synthetic execution result as evidence.
+    """
+    if leg not in {"funding", "onward"}:
+        raise TransactionError("Unsupported sandbox settlement movement")
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Settlement preview requires authorized test application")
+    if (row.quote_snapshot or {}).get("reversal_holds"):
+        raise TransactionError("Transaction held for reversal investigation")
+    intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+        MpesaPassThroughOperationIntent.transaction_id == row.id,
+        MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+        MpesaPassThroughOperationIntent.application_id == application_id,
+        MpesaPassThroughOperationIntent.leg == leg))
+    if (intent is None or intent.provider != "mpesa" or intent.state != "needs_reconciliation"
+            or getattr(row, leg + "_status") not in {"processing", "unknown"}
+            or getattr(row, leg + "_reference") != intent.reference
+            or intent.currency != row.currency
+            or intent.amount != (row.funding_amount if leg == "funding" else row.onward_amount)):
+        raise TransactionError("Matching unresolved claimed operation required")
+    binding = db.scalar(select(MpesaPassThroughLegIdentity).where(
+        MpesaPassThroughLegIdentity.intent_id == intent.id))
+    if binding is None:
+        raise TransactionError("Immutable party binding required")
+    if not isinstance(observation, ProviderQueryObservation) or not isinstance(cost_observation, ProviderCostObservation):
+        raise TransactionError("Separate query and settlement observations required")
+    expected = ExpectedMovement(intent.reference, intent.amount, intent.currency,
+                                binding.source_party, binding.destination_party)
+    movement = validate_provider_query(expected, observation)
+    if cost_observation.source_debit is None:
+        raise TransactionError("Actual source debit evidence required")
+    cost = validate_provider_cost(expected, movement, cost_observation)
+    if row.direction == "incoming" and leg == "funding":
+        preview_incoming_allocation(load_lifecycle(row).quote,
+            actual_provider_cost=cost.deducted_fee, actual_master_credit=cost.net_credit)
+    elif cost.deducted_fee != 0 or cost.net_credit != intent.amount:
+        raise TransactionError("Unexpected provider deduction or beneficiary credit")
+    return {
+        "reference": intent.reference, "environment": "test",
+        "structurally_consistent": True,
+        "gross_amount": format(cost.gross_amount, ".2f"),
+        "deducted_fee": format(cost.deducted_fee, ".2f"),
+        "net_credit": format(cost.net_credit, ".2f"),
+        "source_debit": format(cost.source_debit, ".2f"),
+        "provider_evidence_authenticated": False,
+        "settlement_verified": False, "accounting_authorized": False,
+        "dispatch_authorized": False, "retry_authorized": False,
+    }
