@@ -543,3 +543,27 @@ def consolidated_revenue(
         "provider_wallet_balance_verified": False,
         "live_pass_through_enabled": False,
     }
+
+
+class CertificationEvidenceRequest(BaseModel):
+    case_references: dict[str, str] = Field(default_factory=dict, max_length=10)
+    provider_approval_reference: str | None = Field(default=None, max_length=200)
+    tariff_reference: str | None = Field(default=None, max_length=200)
+    statement_reference: str | None = Field(default=None, max_length=200)
+    independent_review_reference: str | None = Field(default=None, max_length=200)
+
+
+@router.get("/certification/readiness")
+def certification_readiness(db: Session = Depends(get_db), _: User = Depends(_operator)):
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+    return assess_pass_through_sandbox_configuration(db)
+
+
+@router.post("/certification/evidence/preview")
+def certification_evidence_preview(payload: CertificationEvidenceRequest,
+                                   _: User = Depends(_operator)):
+    from services.mpesa_certification_readiness import assess_pass_through_evidence
+    try:
+        return assess_pass_through_evidence(**payload.model_dump())
+    except ValueError:
+        raise HTTPException(status_code=422, detail="Invalid certification case inventory") from None
