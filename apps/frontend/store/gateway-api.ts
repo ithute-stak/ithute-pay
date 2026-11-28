@@ -43,6 +43,21 @@ export type PlatformUser = {
   role: string;
 };
 
+export type CertificationReadiness = {
+  environment: "sandbox"; configuration_blockers: string[]; configuration_complete: boolean;
+  required_cases: string[]; provider_approval_verified: boolean; provider_credentials_authenticated: boolean;
+  dispatch_authorized: boolean; production_configuration_changed: boolean;
+};
+export type CertificationEvidence = {
+  case_references: Record<string, string>; provider_approval_reference: string;
+  tariff_reference: string; statement_reference: string; independent_review_reference: string;
+};
+export type CertificationPreview = {
+  missing_cases: string[]; duplicate_case_references: boolean; document_references_present: Record<string, boolean>;
+  documentation_complete: boolean; provider_evidence_authenticated: boolean; independent_settlement_verified: boolean;
+  dispatch_authorized: boolean; live_transfer_approved: boolean;
+};
+
 export const gatewayApi = createApi({
   reducerPath: "gatewayApi",
   baseQuery: baseQueryWithReauth,
@@ -69,6 +84,13 @@ export const gatewayApi = createApi({
     adminPaymentLinks: builder.query<any[], void>({ query: () => "/admin/payment-links", providesTags: ["Checkout"] }),
     adminMandates: builder.query<any[], void>({ query: () => "/admin/mandates", providesTags: ["Mandates"] }),
     adminMerchants: builder.query<any[], void>({ query: () => "/admin/merchants", providesTags: ["Merchants"] }),
+    passThroughCertificationReadiness: builder.query<CertificationReadiness, void>({
+      query: () => "/admin/mpesa-pass-through/certification/readiness",
+      keepUnusedDataFor: 0,
+    }),
+    previewPassThroughCertificationEvidence: builder.mutation<CertificationPreview, CertificationEvidence>({
+      query: (body) => ({ url: "/admin/mpesa-pass-through/certification/evidence/preview", method: "POST", body }),
+    }),
     consolidatedPassThroughRevenue: builder.query<{
       environment: "test" | "live"; start_date: string; end_date: string;
       totals: { period_service_revenue: string; period_tenant_provider_cost: string; closing_merchant_liability: string; closing_provider_clearing: string };
@@ -227,6 +249,7 @@ export const gatewayApi = createApi({
 });
 
 export const {
+  usePassThroughCertificationReadinessQuery, usePreviewPassThroughCertificationEvidenceMutation,
   useMeQuery, useLoginMutation, useLogoutMutation, useDashboardQuery,
   useAdminPaymentsQuery, useAdminPayoutsQuery, useAdminTransactionsQuery,
   useAdminTransfersQuery, useAdminAuthorizationsQuery, useAdminReversalsQuery,
