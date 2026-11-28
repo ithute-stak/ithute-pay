@@ -505,3 +505,89 @@ async def test_single_sandbox_sender_blocks_unconfirmed_and_incomplete_configura
     with pytest.raises(TransactionError, match="configuration incomplete"):
         await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
     request.assert_not_called()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("outcome,expected", [
+    ("accepted", "accepted_unverified"),
+    ("timeout", "unknown"),
+    ("session_rejected", "unknown"),
+])
+async def test_single_sandbox_sender_commits_once_before_mocked_submission(monkeypatch, outcome, expected):
+    import httpx
+    from database.models import GatewayProviderConfiguration, JournalEntry
+    from services.mpesa_pass_through_outbox import run_single_sandbox_submission
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from integrations.mpesa.hardened import HardenedMpesaClient
+
+    # All HTTP calls are intercepted; even session creation is synthetic.
+    calls = []
+    async def fake_request(self, method, url, **kwargs):
+        calls.append((method, url))
+        assert method == "POST"
+        assert url == "https://openapi.m-pesa.com/sandbox/ipg/v2/vodacomLES/b2bPayment/"
+        assert kwargs["json"]["input_TransactionReference"] == "SenderTest01"
+        assert kwargs["json"]["input_PrimaryPartyCode"] == "111111"
+        assert kwargs["json"]["input_ReceiverPartyCode"] == "222222"
+        assert kwargs["json"]["input_Amount"] == "1020.00"
+        with SessionLocal() as check:
+            intent = check.scalar(select(MpesaPassThroughOperationIntent).where(
+                MpesaPassThroughOperationIntent.transaction_id == tx))
+            assert intent.state == "needs_reconciliation"
+        if outcome == "timeout":
+            raise httpx.ReadTimeout("synthetic timeout")
+        if outcome == "session_rejected":
+            return httpx.Response(401, json={"output_ResponseCode":"INS-1",
+                "output_ResponseDesc":"Session expired"})
+        return httpx.Response(200, json={"output_ResponseCode":"INS-0",
+                                       "output_TransactionID":"SYNTHETIC01"})
+    async def fake_session(self, *, force=False):
+        assert self.environment == "sandbox"
+        return "synthetic-session"
+    monkeypatch.setattr(httpx.AsyncClient, "request", fake_request)
+    monkeypatch.setattr(HardenedMpesaClient, "get_session_key", fake_session)
+    monkeypatch.setattr(HardenedMpesaClient, "_auth_header", lambda self, value: "Bearer synthetic")
+    monkeypatch.setattr("services.gateway_configuration.decrypted_api_key", lambda cfg: "synthetic-key")
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "sender-" + outcome)
+        scope = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **scope, reference="SenderTest01")
+        bind_leg_identity(db, **scope, source_party="111111", destination_party="222222")
+        cfg = db.scalar(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa",
+            GatewayProviderConfiguration.environment == "sandbox"))
+        if cfg is None:
+            cfg = GatewayProviderConfiguration(provider="mpesa", environment="sandbox")
+            db.add(cfg)
+        cfg.enabled = True
+        cfg.mode = "live"
+        cfg.active = False
+        cfg.base_url = "https://openapi.m-pesa.com"
+        cfg.country, cfg.currency, cfg.market = "LES", "LSL", "vodacomLES"
+        cfg.service_provider_code, cfg.origin = "111111", "*"
+        cfg.api_key_ciphertext, cfg.public_key = "synthetic", "synthetic"
+        cfg.metadata_json = {"capabilities":{"transfer":True,"query":True},
+            "pass_through_sandbox_fixtures":{"enabled":True,"approval_reference":"synthetic",
+            "application_id":app,"receiver_shortcodes":["333333"],"max_amount_lsl":"1020.00"}}
+        db.commit()
+    with pytest.raises(TransactionError, match="fixture scope"):
+        await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    assert not calls
+    with SessionLocal() as db:
+        cfg = db.scalar(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa",
+            GatewayProviderConfiguration.environment == "sandbox"))
+        cfg.metadata_json = {**cfg.metadata_json, "pass_through_sandbox_fixtures":{
+            **cfg.metadata_json["pass_through_sandbox_fixtures"], "receiver_shortcodes":["222222"]}}
+        db.commit()
+    result = await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    assert result["observed_status"] == expected
+    assert result["submission_claimed"]
+    assert not result["retry_authorized"]
+    assert not result["accounting_authorized"]
+    assert len(calls) == 1
+    with pytest.raises(TransactionError):
+        await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    assert len(calls) == 1
+    with SessionLocal() as db:
+        assert not db.scalars(select(JournalEntry)).all()
