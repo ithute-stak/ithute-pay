@@ -360,3 +360,33 @@ async def test_commercial_adapter_wire_contract_offline(kind, leg, expected_endp
         assert result.accepted and plan["dispatch_authorized"] is False
         from database.models import JournalEntry
         assert not db.scalars(select(JournalEntry)).all()
+
+
+def test_worker_claim_commits_before_return_and_restart_cannot_reissue():
+    from services.mpesa_pass_through_outbox import prepare_claimed_sandbox_simulation
+    from services.mpesa_pass_through_identity import bind_leg_identity
+    from database.models import JournalEntry
+    with SessionLocal() as db:
+        merchant, app, tx = setup(db, "worker-owned-claim")
+        scope = dict(merchant_id=merchant, application_id=app, transaction_id=tx, leg="funding")
+        reserve_operation(db, **scope, reference="owned-claim")
+        bind_leg_identity(db, **scope, source_party="YYYY", destination_party="XXXX")
+        db.commit()
+    first = prepare_claimed_sandbox_simulation(**scope)
+    assert first["claimed"] is True
+    assert first["dispatch_authorized"] is False
+    assert first["arguments"]["amount"] == Decimal("1020")
+    with SessionLocal() as db:
+        intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+            MpesaPassThroughOperationIntent.transaction_id == tx))
+        assert intent.state == "needs_reconciliation"
+        assert intent.submitted_at is None
+        assert not db.scalars(select(JournalEntry)).all()
+    second = prepare_claimed_sandbox_simulation(**scope)
+    assert second == {"claimed": False, "action": "reconcile_existing_reference",
+                      "reference": "owned-claim", "dispatch_authorized": False}
+    with SessionLocal() as db:
+        db.get(Application, app).environment = "live"
+        db.commit()
+    with pytest.raises(TransactionError, match="test application"):
+        prepare_claimed_sandbox_simulation(**scope)

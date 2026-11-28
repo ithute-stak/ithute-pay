@@ -335,3 +335,48 @@ def build_sandbox_adapter_arguments(db: Session, *, merchant_id: str, applicatio
     args["receiver_party_code" if method == "transfer" else "phone"] = party
     return {"adapter_method": method, "required_shortcode": shortcode,
             "arguments": args, "dispatch_authorized": False}
+
+
+def prepare_claimed_sandbox_simulation(*, merchant_id: str, application_id: str,
+                                       transaction_id: str, leg: str) -> dict:
+    """Own the transaction boundary for an offline worker claim.
+
+    The caller receives a wire plan only after the durable claim commits.
+    This never authorizes actual provider submission. A restart must query
+    or investigate the existing reference, not issue another claim.
+    """
+    from database.session import SessionLocal
+    scope = dict(merchant_id=merchant_id, application_id=application_id,
+                 transaction_id=transaction_id)
+    with SessionLocal() as db:
+        try:
+            row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                             record_id=transaction_id, for_update=True)
+            if row is None:
+                raise TransactionError("Transaction not found in authorized scope")
+            from database.models import Application
+            app = db.get(Application, application_id)
+            if app is None or app.merchant_id != merchant_id or app.environment != "test":
+                raise TransactionError("Simulation requires authorized test application")
+            if leg not in {"funding", "onward"}:
+                raise TransactionError("Unsupported simulation movement")
+            intent = db.scalar(select(MpesaPassThroughOperationIntent).where(
+                MpesaPassThroughOperationIntent.transaction_id == row.id,
+                MpesaPassThroughOperationIntent.merchant_id == merchant_id,
+                MpesaPassThroughOperationIntent.application_id == application_id,
+                MpesaPassThroughOperationIntent.leg == leg).with_for_update())
+            if intent is not None and intent.state == "needs_reconciliation":
+                return {"claimed": False, "action": "reconcile_existing_reference",
+                        "reference": intent.reference, "dispatch_authorized": False}
+            plan = build_sandbox_adapter_arguments(db, **scope, leg=leg)
+            reference = plan["arguments"]["transaction_reference"]
+            if not claim_sandbox_simulation(db, **scope, leg=leg, reference=reference):
+                db.rollback()
+                return {"claimed": False, "action": "reconcile_existing_reference",
+                        "reference": reference, "dispatch_authorized": False}
+            db.commit()
+            return {**plan, "claimed": True, "action": "offline_simulation_only",
+                    "reference": reference, "provider_called": False}
+        except Exception:
+            db.rollback()
+            raise
