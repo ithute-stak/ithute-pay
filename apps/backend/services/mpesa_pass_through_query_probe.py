@@ -161,3 +161,42 @@ async def probe_sandbox_query(
         third_party_conversation_id=third_party_conversation_id,
     )
     return assess_query_response(expected, result)
+
+
+def assess_settlement_record(expected: ExpectedMovement, query_result: ProviderResult,
+                             settlement_fields: dict) -> dict:
+    """Non-posting assessment of a normalized, separately obtained statement row.
+
+    Field names are an internal evidence contract, not a claimed Vodacom wire
+    schema. The retrieval/authentication adapter remains an external dependency.
+    Never substitute quoted amounts or payment submission responses.
+    """
+    from services.mpesa_pass_through_evidence import ProviderCostObservation, validate_provider_cost
+    decision = assess_query_response(expected, query_result)
+    result = {"reference": expected.reference, "structurally_consistent": False,
+              "provider_evidence_authenticated": False, "accounting_authorized": False,
+              "dispatch_authorized": False, "settlement_verified": False}
+    if not decision.sufficient_evidence or decision.status != "succeeded":
+        return {**result, "blocker": "query_identity_or_final_status_unverified"}
+    required = ("statement_reference", "provider", "transaction_id", "currency",
+                "destination", "gross_amount", "deducted_fee", "net_credit", "source_debit")
+    if not isinstance(settlement_fields, dict):
+        return {**result, "blocker": "separate_statement_record_required"}
+    missing = [key for key in required if not isinstance(settlement_fields.get(key), str)
+               or not settlement_fields[key].strip()]
+    if missing:
+        return {**result, "blocker": "missing_statement_fields", "missing_fields": missing}
+    raw = query_result.raw
+    try:
+        movement = validate_provider_query(expected, ProviderQueryObservation(
+            provider="mpesa", reference=str(raw["output_TransactionReference"]),
+            amount=str(raw["output_Amount"]), currency=str(raw["output_Currency"]),
+            source_shortcode=str(raw["output_PrimaryPartyCode"]),
+            destination=str(raw["output_ReceiverPartyCode"]), status="succeeded",
+            transaction_id=decision.transaction_id, reversed=query_result.reversed))
+        validate_provider_cost(expected, movement, ProviderCostObservation(
+            **{key: settlement_fields[key] for key in required if key != "statement_reference"}))
+    except TransactionError:
+        return {**result, "blocker": "statement_identity_or_amount_mismatch"}
+    return {**result, "structurally_consistent": True,
+            "blocker": "independent_statement_authentication_required"}

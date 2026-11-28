@@ -136,3 +136,23 @@ async def test_oversized_reference_is_rejected_before_network_call():
         await probe_sandbox_query(client, expected=expected,
                                   third_party_conversation_id="QUERY_001")
     assert client.called == 0
+
+
+def test_separate_settlement_record_must_match_query_and_reservation():
+    from services.mpesa_pass_through_query_probe import assess_settlement_record
+    fields = dict(statement_reference="statement-1", provider="mpesa",
+                  transaction_id="MPS_123", currency="LSL", destination="XXXX",
+                  gross_amount="1010.00", deducted_fee="0.00",
+                  net_credit="1010.00", source_debit="1010.00")
+    result = assess_settlement_record(EXPECTED, provider_result(), fields)
+    assert result["structurally_consistent"]
+    for key in ("provider_evidence_authenticated", "accounting_authorized",
+                "dispatch_authorized", "settlement_verified"):
+        assert result[key] is False
+    for key in fields:
+        incomplete = {k: v for k, v in fields.items() if k != key}
+        assert not assess_settlement_record(EXPECTED, provider_result(), incomplete)["structurally_consistent"]
+    for change in ({"transaction_id":"OTHER"}, {"destination":"OTHER"},
+                   {"source_debit":"1020"}, {"net_credit":"1000"}):
+        assert not assess_settlement_record(EXPECTED, provider_result(), {**fields, **change})["structurally_consistent"]
+    assert not assess_settlement_record(EXPECTED, provider_result({"output_ResponseCode":"INS-0"}), fields)["structurally_consistent"]
