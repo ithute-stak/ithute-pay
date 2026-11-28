@@ -488,3 +488,33 @@ def test_claimed_sandbox_settlement_preview_never_posts_or_authenticates():
         db.flush()
         with pytest.raises(TransactionError, match="test application"):
             preview_claimed_sandbox_settlement(db, **args)
+
+
+def test_reversal_recovery_preview_preserves_hold_and_original_journals():
+    from services.mpesa_pass_through_reconciliation import (
+        quarantine_authenticated_reversal, preview_reversal_recovery,
+    )
+    with SessionLocal() as db:
+        ids = new(db, "reversal-recovery-preview")
+        funding(db, ids)
+        args = dict(**ids, leg="funding", original_provider_id="vodacom-f-1",
+                    reversal_provider_id="separate-reversal", statement_reference="statement-1",
+                    actual_recovered_amount=Decimal("1000"), actual_reversal_cost=Decimal("5"))
+        with pytest.raises(TransactionError, match="hold"):
+            preview_reversal_recovery(db, **args)
+        quarantine_authenticated_reversal(db, **ids, leg="funding",
+                                          observation=observation(reversed=True))
+        result = preview_reversal_recovery(db, **args)
+        assert result["gross_recovery_gap"] == "25.00"
+        assert result["loss_allocation_required"]
+        for key in ("hold_release_authorized", "accounting_authorized",
+                    "refund_execution_authorized", "provider_evidence_authenticated"):
+            assert result[key] is False
+        for change in ({"actual_recovered_amount": Decimal("1021")},
+                       {"actual_reversal_cost": Decimal("-1")},
+                       {"reversal_provider_id": "vodacom-f-1"},
+                       {"original_provider_id": "other"}):
+            with pytest.raises(TransactionError):
+                preview_reversal_recovery(db, **{**args, **change})
+        assert db.scalar(select(func.count(JournalEntry.id))) == 1
+        db.commit()

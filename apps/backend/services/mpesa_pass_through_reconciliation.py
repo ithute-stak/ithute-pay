@@ -313,3 +313,53 @@ def preview_claimed_sandbox_settlement(
         "settlement_verified": False, "accounting_authorized": False,
         "dispatch_authorized": False, "retry_authorized": False,
     }
+
+
+def preview_reversal_recovery(
+    db: Session, *, merchant_id: str, application_id: str, transaction_id: str,
+    leg: str, original_provider_id: str, reversal_provider_id: str,
+    actual_recovered_amount: Decimal, actual_reversal_cost: Decimal,
+    statement_reference: str,
+) -> dict:
+    """Assess recovery against a held original movement, never release or post.
+
+    An independently authenticated statement and approved loss allocation are
+    required before a compensating journal can be designed. A reversal of a
+    funding leg after onward settlement can create a different liability from
+    a reversal of an onward leg; do not infer that both cancel the transaction.
+    """
+    if leg not in {"funding", "onward", "refund"}:
+        raise TransactionError("Unknown reversal movement")
+    row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                     record_id=transaction_id)
+    app = db.get(Application, application_id)
+    if row is None or app is None or app.merchant_id != merchant_id or app.environment != "test":
+        raise TransactionError("Reversal preview requires authorized test application")
+    hold = (row.quote_snapshot or {}).get("reversal_holds", {}).get(leg)
+    if (not hold or hold.get("status") != "investigation_required"
+            or hold.get("provider_id") != original_provider_id
+            or original_provider_id != getattr(row, leg + "_provider_id")
+            or hold.get("original_evidence_digest") != getattr(row, leg + "_evidence_hash")):
+        raise TransactionError("Matching original reversal hold required")
+    if (not isinstance(reversal_provider_id, str) or not reversal_provider_id.strip()
+            or len(reversal_provider_id) > 100 or reversal_provider_id == original_provider_id
+            or not isinstance(statement_reference, str) or not statement_reference.strip()
+            or len(statement_reference) > 200):
+        raise TransactionError("Separate reversal and statement identifiers required")
+    for value in (actual_recovered_amount, actual_reversal_cost):
+        if (not isinstance(value, Decimal) or not value.is_finite() or value < 0
+                or value.as_tuple().exponent < -2):
+            raise TransactionError("Invalid reversal recovery amount")
+    original = row.onward_amount if leg == "onward" else row.funding_amount
+    if actual_recovered_amount > original:
+        raise TransactionError("Recovery exceeds original movement")
+    return {
+        "leg": leg, "original_amount": format(original, ".2f"),
+        "reported_recovery": format(actual_recovered_amount, ".2f"),
+        "reported_reversal_cost": format(actual_reversal_cost, ".2f"),
+        "gross_recovery_gap": format(original - actual_recovered_amount + actual_reversal_cost, ".2f"),
+        "onward_previously_confirmed": row.onward_status == "succeeded",
+        "hold_release_authorized": False, "accounting_authorized": False,
+        "refund_execution_authorized": False, "provider_evidence_authenticated": False,
+        "loss_allocation_required": True,
+    }
