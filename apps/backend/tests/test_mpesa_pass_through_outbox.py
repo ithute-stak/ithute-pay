@@ -489,3 +489,19 @@ async def test_recovery_query_cycle_blocks_missing_config_and_live_application(m
     with pytest.raises(TransactionError, match="test application"):
         await run_sandbox_recovery_cycle(**args)
     factory.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_single_sandbox_sender_blocks_unconfirmed_and_incomplete_configuration(monkeypatch):
+    from services.mpesa_pass_through_outbox import run_single_sandbox_submission
+    from unittest.mock import AsyncMock
+    request = AsyncMock()
+    monkeypatch.setattr("httpx.AsyncClient.request", request)
+    scope = dict(merchant_id="missing", application_id="missing", transaction_id="missing", leg="funding")
+    with pytest.raises(TransactionError, match="confirmation"):
+        await run_single_sandbox_submission(**scope)
+    monkeypatch.setattr("services.mpesa_certification_readiness.assess_pass_through_sandbox_configuration",
+                        lambda db: {"configuration_complete": False})
+    with pytest.raises(TransactionError, match="configuration incomplete"):
+        await run_single_sandbox_submission(**scope, confirm_sandbox_submission=True)
+    request.assert_not_called()

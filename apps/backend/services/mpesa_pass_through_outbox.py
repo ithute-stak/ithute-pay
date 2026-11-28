@@ -505,3 +505,130 @@ def assess_sandbox_refund_eligibility(db: Session, *, merchant_id: str,
             "recognized_revenue": "0.00" if not blockers else None,
             "provider_refund_policy_verified": False, "refund_execution_authorized": False,
             "reservation_authorized": False, "accounting_authorized": False}
+
+
+async def run_single_sandbox_submission(*, merchant_id: str, application_id: str,
+                                        transaction_id: str, leg: str,
+                                        confirm_sandbox_submission: bool = False) -> dict:
+    """Internal sandbox sender, disabled unless explicit fixture configuration exists.
+
+    Dedicated configuration metadata must list disposable approved test parties,
+    explicit capabilities and the approval reference. No public route, production
+    fallback, shortcode override or submission replay. Metadata is not proof of
+    external approval; trusted operators must verify it before enabling access.
+    """
+    import re
+    import httpx
+    from database.session import SessionLocal
+    from database.models import GatewayProviderConfiguration
+    from services.gateway_configuration import decrypted_api_key
+    from integrations.mpesa.client import MpesaRuntimeConfig
+    from integrations.mpesa.hardened import HardenedMpesaClient
+    from services.mpesa_certification_readiness import assess_pass_through_sandbox_configuration
+
+    if confirm_sandbox_submission is not True:
+        raise TransactionError("Explicit sandbox submission confirmation required")
+    scope = dict(merchant_id=merchant_id, application_id=application_id,
+                 transaction_id=transaction_id, leg=leg)
+
+    class SingleSubmissionClient(HardenedMpesaClient):
+        async def _request(self, method, suffix, *, params=None, json_body=None):
+            if (self.environment != "sandbox" or self.base != "https://openapi.m-pesa.com"
+                    or self.market != "vodacomLES" or self.country != "LES" or self.currency != "LSL"
+                    or method != "POST" or suffix not in {
+                        "c2bPayment/singleStage/", "b2cPayment/", "b2bPayment/"}):
+                raise TransactionError("Sandbox-only submission boundary")
+            self._validate_request_contract(suffix, params=params, json_body=json_body)
+            session = await self.get_session_key()
+            async with httpx.AsyncClient(timeout=self.timeout, follow_redirects=False) as transport:
+                response = await transport.request(method, self._url(suffix), params=params,
+                    json=json_body, headers={"Authorization": self._auth_header(session),
+                    "Origin": self.origin, "Content-Type": "application/json"})
+            # Even explicit session errors are reconciled, never replayed.
+            return response.status_code, self._payload(response)
+
+    with SessionLocal() as db:
+        if not assess_pass_through_sandbox_configuration(db)["configuration_complete"]:
+            raise TransactionError("Sandbox configuration incomplete")
+        rows = db.scalars(select(GatewayProviderConfiguration).where(
+            GatewayProviderConfiguration.provider == "mpesa",
+            GatewayProviderConfiguration.environment == "sandbox")).all()
+        if len(rows) != 1:
+            raise TransactionError("Unique sandbox configuration required")
+        cfg = rows[0]
+        if (not cfg.enabled or cfg.mode != "live"
+                or cfg.base_url not in {"https://openapi.m-pesa.com", "https://openapi.m-pesa.com/"}
+                or (cfg.country, cfg.currency, cfg.market) != ("LES", "LSL", "vodacomLES")):
+            raise TransactionError("Sandbox configuration scope mismatch")
+        metadata = cfg.metadata_json or {}
+        fixtures = metadata.get("pass_through_sandbox_fixtures") or {}
+        if (not isinstance(fixtures, dict) or fixtures.get("enabled") is not True
+                or not isinstance(fixtures.get("approval_reference"), str)
+                or not fixtures["approval_reference"].strip()
+                or fixtures.get("application_id") != application_id):
+            raise TransactionError("Approved disposable sandbox fixtures required")
+        row = find_owned(db, merchant_id=merchant_id, application_id=application_id,
+                         record_id=transaction_id, for_update=True)
+        if row is None:
+            raise TransactionError("Transaction outside authorized scope")
+        plan = build_sandbox_adapter_arguments(db, **scope)
+        method = plan["adapter_method"]
+        args = plan["arguments"]
+        capability = {"collect":"collection", "payout":"payout", "transfer":"transfer"}[method]
+        capabilities = metadata.get("capabilities") or {}
+        if not isinstance(capabilities, dict) or capabilities.get(capability) is not True or capabilities.get("query") is not True:
+            raise TransactionError("Explicit sandbox product capabilities required")
+        shortcode = plan["required_shortcode"]
+        party = args.get("receiver_party_code") if method == "transfer" else args.get("phone")
+        allowed = fixtures.get("receiver_shortcodes" if method == "transfer" else "test_msisdns")
+        if (shortcode != cfg.service_provider_code or not re.fullmatch(r"[0-9A-Za-z]{4,12}", shortcode)
+                or not isinstance(allowed, list) or party not in allowed
+                or not isinstance(party, str)
+                or not re.fullmatch(r"[0-9A-Za-z]{4,12}" if method == "transfer" else r"[0-9]{11,14}", party)
+                or party == shortcode):
+            raise TransactionError("Sandbox party not in approved fixture scope")
+        ref = args["transaction_reference"]
+        if not re.fullmatch(r"[0-9A-Za-z]{1,20}", ref):
+            raise TransactionError("Reference must support submission and query without modification")
+        max_amount = fixtures.get("max_amount_lsl")
+        if not isinstance(max_amount, str):
+            raise TransactionError("Explicit sandbox amount cap required")
+        try:
+            cap = Decimal(max_amount)
+        except ArithmeticError as exc:
+            raise TransactionError("Invalid sandbox amount cap") from exc
+        amount = args["amount"]
+        if (not cap.is_finite() or not amount.is_finite() or not 0 < amount <= cap
+                or cap.as_tuple().exponent < -2 or args["currency"] != "LSL"):
+            raise TransactionError("Sandbox amount exceeds approved fixture cap")
+        api_key = decrypted_api_key(cfg)
+        if not api_key or not cfg.public_key:
+            raise TransactionError("Sandbox credentials missing")
+        runtime = MpesaRuntimeConfig(base_url=cfg.base_url, environment="sandbox",
+            country="LES", currency="LSL", market="vodacomLES", service_provider_code=shortcode,
+            api_key=api_key, public_key=cfg.public_key, origin=cfg.origin,
+            session_activation_seconds=cfg.session_activation_seconds,
+            timeout_seconds=cfg.request_timeout_seconds)
+        # Persist claim before the first possible external payment request.
+        if not claim_sandbox_simulation(db, **scope, reference=ref):
+            raise TransactionError("Existing claim requires reconciliation")
+        db.commit()
+    status = "unknown"
+    client = None
+    try:
+        client = SingleSubmissionClient(runtime)
+        if client._redis is not None:
+            await client._redis.aclose()
+        client._redis = None
+        result = await getattr(client, method)(**args)
+        if result.accepted:
+            status = "accepted_unverified"
+    except Exception:
+        pass
+    finally:
+        if client is not None:
+            client._session_memory = None
+    return {"reference": ref, "environment": "sandbox", "submission_claimed": True,
+            "observed_status": status, "action": "reconcile_existing_reference",
+            "accounting_authorized": False, "retry_authorized": False,
+            "live_dispatch_authorized": False}
